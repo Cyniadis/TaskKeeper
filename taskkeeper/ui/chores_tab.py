@@ -37,7 +37,6 @@ def _init_widget_state() -> None:
 def _render_header(service: ChoreService, current_date: date) -> None:
     st.markdown(f"### Chores · {format_date_fr(current_date)}")
 
-    st.space("xxsmall")
     with st.container(horizontal=True, vertical_alignment="center", key="chores_header_controls", width="content"):
         st.markdown("**Daily budget (min)**")
         st.number_input(
@@ -62,9 +61,9 @@ def _render_progress(chores: list[RecurringChore], daily_budget: int) -> None:
 def _render_category_filter(chores: list[RecurringChore]) -> Category | None:
     used_categories = sorted({c.category for c in chores}, key=lambda cat: cat.label)
     options = ["Tout"] + [f"{cat.icon} {cat.label}" for cat in used_categories]
-    choice = st.pills(
-        "Filter by category", options=options, key="chores_category_filter",
-        label_visibility="collapsed",
+    choice = st.selectbox(
+        "Catégorie", options=options, key="chores_category_filter",
+        width=160,
     )
     if not choice or choice == "Tout":
         return None
@@ -72,7 +71,6 @@ def _render_category_filter(chores: list[RecurringChore]) -> Category | None:
         if choice == f"{cat.icon} {cat.label}":
             return cat
     return None
-
 
 def _render_toolbar() -> None:
     """Sort field + direction + details toggle, all on one line."""
@@ -136,7 +134,7 @@ def render(service: ChoreService, current_date: date) -> None:
 
         _render_progress(all_today, st.session_state.chores_daily_budget)
         
-        st.space("xsmall")
+        st.space("xxsmall")
 
         category_filter = _render_category_filter(all_today)
         if category_filter is not None:
@@ -147,8 +145,7 @@ def render(service: ChoreService, current_date: date) -> None:
         all_today = sorted(all_today, key=key_fn, reverse=st.session_state.chores_sort_desc)
 
         show_details = st.session_state.chores_show_details
-
-
+        
         if not all_today:
             st.info("Aucune tâche à afficher pour ce filtre.")
         else:

@@ -112,7 +112,7 @@ def render(service: GroceryService, current_date: date) -> None:
         df,
         column_config=_column_config(st.session_state.groceries_mode),
         hide_index=True,
-        width="stretch",
+        width="content",
         height="content",
         key=key,
         num_rows="fixed" if st.session_state.groceries_mode else "dynamic",

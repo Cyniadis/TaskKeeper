@@ -23,4 +23,4 @@ def format_date_fr(d: date) -> str:
 
 def format_date_short_fr(d: date) -> str:
     """'sam. 22 août' — compact form for the reschedule popover."""
-    return f"{_WEEKDAYS_FR[d.weekday()][:3]}. {d.day} {_MONTHS_FR[d.month - 1][:3]}"
+    return f"{_WEEKDAYS_FR[d.weekday()][:3]}. {d.day} {_MONTHS_FR[d.month - 1][:4]}"

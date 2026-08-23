@@ -106,7 +106,7 @@ def render_task_row(
 
         # -- priority dot + category icon -----------------------------------
         st.markdown(_priority_dot(chore.priority), width="content")
-        st.markdown(chore.category.icon, width="content")
+        st.markdown(chore.category.icon, width=12)
 
         # -- name (stretches to fill remaining space) + status badge -------
         with st.container(horizontal=True, vertical_alignment="center",
@@ -119,12 +119,12 @@ def render_task_row(
 
         # -- detail extras (priority value + date) --------------------------
         if show_details:
-            st.caption(f"{chore.priority:.1f}", width="content")
-            shown_date = chore.done_date if status == "done" else chore.due_date
-            st.caption(
-                format_date_short_fr(shown_date) if shown_date else "—",
-                width="content",
-            )
+            with st.container(horizontal=True, width="content"):
+                st.caption(f"{chore.priority:.1f}")
+                shown_date = chore.done_date if status == "done" else chore.due_date
+                st.caption(
+                    format_date_short_fr(shown_date) if shown_date else "—", width=80
+                )
 
         # -- duration -------------------------------------------------------
         st.caption(f"{chore.duration} min", width="content")

@@ -77,6 +77,21 @@ def build_services() -> Services:
 
 def main() -> None:
     st.set_page_config(page_title="TaskKeeper", layout="wide")
+    
+    
+    st.markdown(
+    """
+    <style>
+        .block-container {
+        margin-left: auto;
+        margin-right: auto;
+        width: 80%;
+        text-align: center;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True)
+
     st.title("TaskKeeper", anchor=False)
 
     services = build_services()
