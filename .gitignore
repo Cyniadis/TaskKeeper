@@ -1,0 +1,43 @@
+# -- Python -----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# -- Virtual environments ------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# -- TaskKeeper data (real, personal data — never commit) ----------------
+# Matches the top-level data/ folder only (where taskkeeper.db lives) —
+# does NOT match legacy_data/, which holds committed test fixtures.
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# -- Streamlit -------------------------------------------------------------
+.streamlit/secrets.toml
+
+# -- Env / secrets ----------------------------------------------------------
+.env
+.env.*
+
+# -- Editor / OS cruft -----------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# -- Test / coverage artifacts -----------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
