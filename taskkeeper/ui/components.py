@@ -12,7 +12,6 @@ inject_compact_css() is kept as a no-op so callers don't need updating.
 from __future__ import annotations
 
 from datetime import date
-from tkinter import NO
 from typing import Callable, TypeVar
 
 import streamlit as st
