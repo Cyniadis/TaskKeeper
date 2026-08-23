@@ -36,27 +36,52 @@ def eligibility(chore: RecurringChore, current_date: date) -> Eligibility:
     return Eligibility.NOT_ELIGIBLE
 
 
-def _select_by_priority(chores: list[RecurringChore], time_budget: int) -> list[RecurringChore]:
-    """0/1 knapsack, favouring higher-priority chores."""
+def _select_by_priority(
+    chores: list[RecurringChore],
+    time_budget: int,
+    *,
+    priority_override_threshold: float = 8.0,
+) -> list[RecurringChore]:
+    """0/1 knapsack, favouring higher-priority chores.
+
+    Chores whose priority is at or above `priority_override_threshold` are
+    pulled out first and included unconditionally — they go on today's list
+    regardless of whether their duration fits the remaining budget.  The
+    knapsack then fills the leftover time with the rest.  This means a very
+    urgent chore can push the day slightly over budget rather than being
+    silently dropped because it didn't happen to fit in the remaining slot.
+    """
     ordered = sorted(chores, key=lambda c: (-c.priority, c.due_date or date.max))
-    n = len(ordered)
-    dp = [[0] * (time_budget + 1) for _ in range(n + 1)]
-    for i, chore in enumerate(ordered, start=1):
+
+    # Split: must-do (priority override) vs normal candidates.
+    must_do = [c for c in ordered if c.priority >= priority_override_threshold]
+    candidates = [c for c in ordered if c.priority < priority_override_threshold]
+
+    remaining = time_budget - sum(c.duration for c in must_do)
+
+    if not candidates or remaining <= 0:
+        return must_do
+
+    # Standard knapsack over the lower-priority candidates.
+    n = len(candidates)
+    dp = [[0] * (remaining + 1) for _ in range(n + 1)]
+    for i, chore in enumerate(candidates, start=1):
         duration = chore.duration
-        for capacity in range(time_budget + 1):
+        for capacity in range(remaining + 1):
             if duration <= capacity:
                 dp[i][capacity] = max(dp[i - 1][capacity], dp[i - 1][capacity - duration] + duration)
             else:
                 dp[i][capacity] = dp[i - 1][capacity]
 
-    selected: list[RecurringChore] = []
-    capacity = time_budget
+    knapsack_selected: list[RecurringChore] = []
+    capacity = remaining
     for i in range(n, 0, -1):
         if dp[i][capacity] != dp[i - 1][capacity]:
-            chore = ordered[i - 1]
-            selected.append(chore)
+            chore = candidates[i - 1]
+            knapsack_selected.append(chore)
             capacity -= chore.duration
-    return selected
+
+    return must_do + knapsack_selected
 
 
 def compute_daily_chores(
