@@ -1,13 +1,4 @@
 """Shared row/status widgets for the Chores and One-time tabs.
-
-Zero custom CSS. All visual differentiation comes from:
-  - st.badge()                    → status tags (en retard / reporté)
-  - Markdown syntax               → ~~strikethrough~~ for done names
-  - Priority emoji                → 🔴 / 🟡 / ⚪ tier dot
-  - st.divider()                  → row separation
-  - st.container(horizontal=True) → layout structure (no st.columns)
-
-inject_compact_css() is kept as a no-op so callers don't need updating.
 """
 from __future__ import annotations
 
@@ -19,18 +10,11 @@ import streamlit as st
 from ..domain.task import Category, RecurringChore
 from .format import format_date_short_fr
 
-
-def inject_compact_css() -> None:
-    """No-op — retained so callers (chores_tab, onetime_tab) need no changes."""
-    pass
-
-
 # ---------------------------------------------------------------------------
 # Shared sort + category filter toolbar
 # ---------------------------------------------------------------------------
 
 T = TypeVar("T")
-
 
 def render_sort_filter_toolbar(
     *,
