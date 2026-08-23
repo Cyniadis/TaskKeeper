@@ -17,13 +17,11 @@ from pathlib import Path
 import streamlit as st
 
 from taskkeeper.persistence.change_log import ChangeLog
-from taskkeeper.persistence.grocery_repository import build_grocery_repository, seed_sample_groceries
+from taskkeeper.persistence.grocery_repository import build_grocery_repository
 from taskkeeper.persistence.settings_store import SettingsStore
 from taskkeeper.persistence.task_repository import (
     build_chore_repository,
     build_onetime_repository,
-    seed_sample_chores,
-    seed_sample_onetime,
 )
 from taskkeeper.services.chore_service import ChoreService, OneTimeTaskService
 from taskkeeper.services.grocery_service import GroceryService
@@ -49,8 +47,7 @@ def get_connection() -> sqlite3.Connection:
     DB_PATH is the actual source of truth now, surviving both Streamlit
     reruns (via st.cache_resource) and full process restarts (via the
     file itself). Use migrate_legacy_data.py to populate it from the
-    original app's JSON files, or let it self-seed with sample data on
-    first run if it's empty."""
+    original app's JSON files."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(str(DB_PATH), check_same_thread=False)
 
@@ -67,10 +64,6 @@ def build_services() -> Services:
     change_log = ChangeLog(conn)
     settings = SettingsStore(conn)
 
-    seed_sample_chores(chore_repo, date.today())
-    seed_sample_onetime(onetime_repo)
-    seed_sample_groceries(grocery_repo)
-
     chores_service = ChoreService(chore_repo, change_log)
     chores_service.snapshot_baseline()
 
@@ -83,15 +76,14 @@ def build_services() -> Services:
 
 
 def main() -> None:
-    st.set_page_config(page_title="TaskKeeper", layout="centered")
+    st.set_page_config(page_title="TaskKeeper", layout="wide")
     st.title("TaskKeeper", anchor=False)
 
     services = build_services()
     today = date.today()
 
     chores_ui, library_ui, onetime_ui, groceries_ui, timer_ui = st.tabs(
-        ["📝 Chores", "📋 Library", "🗓️ One-time", "🛒 Groceries", "⏱️ Timer"]
-    )
+        ["📝 Chores", "📋 Library", "🗓️ One-time", "🛒 Groceries", "⏱️ Timer"])
 
     with chores_ui:
         chores_tab.render(services.chores, today)

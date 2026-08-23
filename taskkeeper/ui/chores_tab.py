@@ -37,7 +37,8 @@ def _init_widget_state() -> None:
 def _render_header(service: ChoreService, current_date: date) -> None:
     st.markdown(f"### Chores · {format_date_fr(current_date)}")
 
-    with st.container(horizontal=True, vertical_alignment="center", key="chores_header_controls"):
+    st.space("xxsmall")
+    with st.container(horizontal=True, vertical_alignment="center", key="chores_header_controls", width="content"):
         st.markdown("**Daily budget (min)**")
         st.number_input(
             "Daily budget", min_value=5, max_value=720, step=15,
@@ -53,8 +54,9 @@ def _render_header(service: ChoreService, current_date: date) -> None:
 
 def _render_progress(chores: list[RecurringChore], daily_budget: int) -> None:
     active_minutes = sum(c.duration for c in chores if not c.is_completed())
-    st.caption(f"**{active_minutes} / {daily_budget} min** — {len(chores)} tasks")
-    st.progress(min(1.0, active_minutes / daily_budget) if daily_budget else 0.0)
+    with st.container(horizontal=True):
+        st.caption(f"**{active_minutes} / {daily_budget} min** — {len(chores)} tasks")
+        st.progress(min(1.0, active_minutes / daily_budget) if daily_budget else 0.0, width=500)
 
 
 def _render_category_filter(chores: list[RecurringChore]) -> Category | None:
@@ -78,7 +80,7 @@ def _render_toolbar() -> None:
         st.markdown("**Sort by**")
         st.selectbox(
             "Sort by", options=list(_SORT_FIELDS.keys()), key="chores_sort_field",
-            width=140, label_visibility="collapsed",
+            width=140, label_visibility="collapsed", 
         )
         label = "▼ Descending" if st.session_state.chores_sort_desc else "▲ Ascending"
         st.button(
@@ -117,51 +119,60 @@ def _render_add_form(service: ChoreService) -> None:
 
 def render(service: ChoreService, current_date: date) -> None:
     _init_widget_state()
-    inject_compact_css()
 
-    _render_header(service, current_date)
+    with st.container(width="content", horizontal_alignment="distribute"):
+        _render_header(service, current_date)
+        
+        all_today = service.get_today(current_date)
+        if not st.session_state.chores_show_completed:
+            all_today = [c for c in all_today if not c.is_completed()]
+        if not st.session_state.chores_show_rescheduled:
+            all_today = [
+                c for c in all_today
+                if not (c.is_manually_rescheduled() and c.due_date != current_date)
+            ]
+            
+       
 
-    all_today = service.get_today(current_date)
-    if not st.session_state.chores_show_completed:
-        all_today = [c for c in all_today if not c.is_completed()]
-    if not st.session_state.chores_show_rescheduled:
-        all_today = [
-            c for c in all_today
-            if not (c.is_manually_rescheduled() and c.due_date != current_date)
-        ]
+        _render_progress(all_today, st.session_state.chores_daily_budget)
+        
+        st.space("xsmall")
 
-    _render_progress(all_today, st.session_state.chores_daily_budget)
+        category_filter = _render_category_filter(all_today)
+        if category_filter is not None:
+            all_today = [c for c in all_today if c.category == category_filter]
 
-    category_filter = _render_category_filter(all_today)
-    if category_filter is not None:
-        all_today = [c for c in all_today if c.category == category_filter]
+        _render_toolbar()
+        key_fn = _SORT_FIELDS[st.session_state.chores_sort_field]
+        all_today = sorted(all_today, key=key_fn, reverse=st.session_state.chores_sort_desc)
 
-    _render_toolbar()
-    key_fn = _SORT_FIELDS[st.session_state.chores_sort_field]
-    all_today = sorted(all_today, key=key_fn, reverse=st.session_state.chores_sort_desc)
+        show_details = st.session_state.chores_show_details
 
-    show_details = st.session_state.chores_show_details
 
-    if not all_today:
-        st.info("Aucune tâche à afficher pour ce filtre.")
-    else:
-        with st.container(gap=None):
-            for chore in all_today:
-                render_task_row(
-                    chore, current_date,
-                    show_details=show_details,
-                    next_due_date=service.next_due_date(chore.id, current_date),
-                    on_toggle=lambda cid: service.toggle_complete(cid, current_date),
-                    on_reschedule_today=lambda cid: service.reschedule(cid, current_date),
-                    on_reschedule_weekend=lambda cid: service.reschedule(
-                        cid, current_date + timedelta(days=(5 - current_date.weekday()) % 7)
-                    ),
-                    on_reschedule_next_due=lambda cid: service.reschedule(
-                        cid, service.next_due_date(cid, current_date)
-                    ),
-                    on_reschedule_date=lambda cid, d: service.reschedule(cid, d),
-                    on_cancel=lambda cid: service.cancel(cid),
-                )
+        if not all_today:
+            st.info("Aucune tâche à afficher pour ce filtre.")
+        else:
+            with st.container(gap=None):
+                for chore in all_today:
+                    render_task_row(
+                        chore, current_date,
+                        show_details=show_details,
+                        next_due_date=service.next_due_date(chore.id, current_date),
+                        on_toggle=lambda cid: service.toggle_complete(cid, current_date),
+                        on_reschedule_today=lambda cid: service.reschedule(cid, current_date),
+                        on_reschedule_weekend=lambda cid: service.reschedule(
+                            cid, current_date + timedelta(days=(5 - current_date.weekday()) % 7)
+                        ),
+                        on_reschedule_next_due=lambda cid: service.reschedule(
+                            cid, service.next_due_date(cid, current_date)
+                        ),
+                        on_reschedule_date=lambda cid, d: service.reschedule(cid, d),
+                        on_cancel=lambda cid: service.cancel(cid),
+                    )
 
-    st.divider()
-    _render_add_form(service)
+        # Custom divider with a small margin
+        st.markdown(
+            '<hr style="margin: 0; border: none; border-bottom: 1px solid rgba(128, 128, 128, 0.2);" />',
+            unsafe_allow_html=True,
+        )    
+        _render_add_form(service)

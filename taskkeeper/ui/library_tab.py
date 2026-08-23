@@ -163,6 +163,20 @@ def _restore_dialog(service: ChoreService) -> None:
 
 def render(service: ChoreService) -> None:
     _init_state()
+    st.markdown(
+        """
+        <style>
+        [data-testid="stTabPanel"] > div {
+            overflow-x: auto !important;
+        }
+        [data-testid="stTabPanel"] iframe {
+            min-width: 1500px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.markdown("### Task Library")
     st.caption("Bulk view and edit every recurring chore.")
 
@@ -228,7 +242,7 @@ def render(service: ChoreService) -> None:
         sorted_df,
         column_config=_column_config(_on_show_changes_click),
         hide_index=True,
-        width="stretch",
+        width="content",
         height="content",
         key=key,
         num_rows="dynamic",
