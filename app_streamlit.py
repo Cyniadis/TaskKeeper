@@ -85,7 +85,7 @@ def main() -> None:
         .block-container {
         margin-left: auto;
         margin-right: auto;
-        width: 80%;
+        width: 90%;
         text-align: center;
         }
     </style>

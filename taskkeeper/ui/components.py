@@ -63,88 +63,32 @@ def _name_markup(chore: RecurringChore, status: str) -> str:
 # Public row renderer
 # ---------------------------------------------------------------------------
 
-def render_task_row(
+def render_reschedule(
     chore: RecurringChore,
     current_date: date,
-    *,
-    show_details: bool,
     next_due_date: date | None,
-    on_toggle: Callable[[str], None],
     on_reschedule_today: Callable[[str], None],
     on_reschedule_weekend: Callable[[str], None],
     on_reschedule_next_due: Callable[[str], None],
     on_reschedule_date: Callable[[str, date], None],
-    on_cancel: Callable[[str], None],
+    on_cancel: Callable[[str], None]
 ) -> None:
-    """One chore row using st.container(horizontal=True) throughout.
-
-    Layout in both modes:
-      [✓] [dot] [icon] [name ~~~ :badge:]──stretch──  [detail?] [dur]  [⋯]
-
-    The name container uses width="stretch" to fill available space;
-    every other child uses width="content" (the default) so it stays
-    as tight as its content. No st.columns, no CSS ratios.
-    """
-    status = _row_status(chore, current_date)
-
-    # Outer row — horizontal, vertically centred, wraps on narrow screens
-    with st.container(
-        key=f"chore_row_{chore.id}",
-        horizontal=True,
-        vertical_alignment="center",
-        gap="small",
-    ):
-        # -- checkbox -------------------------------------------------------
-        st.checkbox(
-            "done",
-            value=(status == "done"),
-            key=f"chk_{chore.id}",
-            label_visibility="collapsed",
-            on_change=lambda cid=chore.id: on_toggle(cid),
-            disabled=(status == "rescheduled"),
-        )
-
-        # -- priority dot + category icon -----------------------------------
-        st.markdown(_priority_dot(chore.priority), width="content")
-        st.markdown(chore.category.icon, width=12)
-
-        # -- name (stretches to fill remaining space) + status badge -------
-        with st.container(horizontal=True, vertical_alignment="center",
-                          gap="small", width="stretch"):
-            st.markdown(_name_markup(chore, status), width="content")
-            if status == "late":
-                st.badge("en retard", color="red")
-            elif status == "rescheduled":
-                st.badge("reporté", color="orange")
-
-        # -- detail extras (priority value + date) --------------------------
-        if show_details:
-            with st.container(horizontal=True, width="content"):
-                st.caption(f"{chore.priority:.1f}")
-                shown_date = chore.done_date if status == "done" else chore.due_date
-                st.caption(
-                    format_date_short_fr(shown_date) if shown_date else "—", width=80
-                )
-
-        # -- duration -------------------------------------------------------
-        st.caption(f"{chore.duration} min", width="content")
-
-        # -- reschedule popover ---------------------------------------------
-        with st.popover("⋯", width="content"):
-            # Two quick-reschedule buttons side by side
-            with st.container(horizontal=True, gap="small"):
-                st.button(
-                    "📅 Aujourd'hui",
-                    key=f"resched_today_{chore.id}",
-                    width="stretch",
-                    on_click=lambda cid=chore.id: on_reschedule_today(cid),
-                )
-                st.button(
-                    "🛌 Week-end",
-                    key=f"resched_weekend_{chore.id}",
-                    width="stretch",
-                    on_click=lambda cid=chore.id: on_reschedule_weekend(cid),
-                )
+    with st.container():
+        # Two quick-reschedule buttons side by side
+        st.markdown(f"**{chore.category.icon} {chore.name}**")
+        with st.container(horizontal=True, gap="small", width="stretch"):
+            st.button(
+                "📅 Aujourd'hui",
+                key=f"resched_today_{chore.id}",
+                width="stretch",
+                on_click=lambda cid=chore.id: on_reschedule_today(cid),
+            )
+            st.button(
+                "🛌 Week-end",
+                key=f"resched_weekend_{chore.id}",
+                width="stretch",
+                on_click=lambda cid=chore.id: on_reschedule_weekend(cid),
+            )
 
             next_label = (
                 f"⏭ {format_date_short_fr(next_due_date)}"
@@ -157,30 +101,79 @@ def render_task_row(
                 width="stretch",
                 on_click=lambda cid=chore.id: on_reschedule_next_due(cid),
             )
-
-            # Date picker + OK button side by side
-            with st.container(horizontal=True, vertical_alignment="center", gap="small"):
-                picked = st.date_input(
-                    "date",
-                    value=current_date,
-                    key=f"resched_pick_{chore.id}",
-                    label_visibility="collapsed",
-                    width="stretch",
-                )
-                st.button(
-                    "OK",
-                    key=f"resched_pick_btn_{chore.id}",
-                    on_click=lambda cid=chore.id, d=picked: on_reschedule_date(cid, d),
-                )
-
-            st.divider()
             st.button(
                 "✕ Annuler",
                 key=f"cancel_{chore.id}",
                 width="stretch",
-                type="tertiary",
                 on_click=lambda cid=chore.id: on_cancel(cid),
             )
+            
+        # Date picker + OK button side by side
+        with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+            picked = st.date_input(
+                "date",
+                value=current_date,
+                key=f"resched_pick_{chore.id}",
+                label_visibility="collapsed",
+                width="stretch",
+            )
+            st.button(
+                "OK",
+                key=f"resched_pick_btn_{chore.id}",
+                on_click=lambda cid=chore.id, d=picked: on_reschedule_date(cid, d),
+            )
 
-    # Row separator — native Streamlit, no CSS border-bottom needed
-    # st.divider()
+
+def render_task_row(
+    chore: RecurringChore,
+    current_date: date,
+    *,
+    show_details: bool,
+    on_toggle: Callable[[str], None],
+) -> None:
+    """One chore row using st.container(horizontal=True) throughout.
+
+    Layout in both modes:
+      [✓] [dot] [icon] [name ~~~ :badge:]──stretch──  [detail?] [dur]  [⋯]
+
+    The name container uses width="stretch" to fill available space;
+    every other child uses width="content" (the default) so it stays
+    as tight as its content. No st.columns, no CSS ratios.
+    """
+    status = _row_status(chore, current_date)
+
+    # -- checkbox -------------------------------------------------------
+    st.checkbox(
+        "done",
+        value=(status == "done"),
+        key=f"chk_{chore.id}",
+        label_visibility="collapsed",
+        on_change=lambda cid=chore.id: on_toggle(cid),
+        disabled=(status == "rescheduled"),
+    )
+
+    # -- priority dot + category icon -----------------------------------
+    st.markdown(_priority_dot(chore.priority), width="content")
+    st.markdown(chore.category.icon, width=10)
+
+    # -- name (stretches to fill remaining space) + status badge -------
+    with st.container(horizontal=True, vertical_alignment="center",
+                        gap="small", width="stretch", horizontal_alignment="left"):
+        st.markdown(_name_markup(chore, status), width="content")
+        if status == "late":
+            st.badge("en retard", color="red")
+        elif status == "rescheduled":
+            st.badge("reporté", color="orange")
+
+    # -- detail extras (priority value + date) --------------------------
+    if show_details:
+        with st.container(horizontal=True, width="content"):
+            st.caption(f"{chore.priority:.1f}")
+            shown_date = chore.done_date if status == "done" else chore.due_date
+            st.caption(
+                format_date_short_fr(shown_date) if shown_date else "—", width=80
+            )
+
+    # -- duration -------------------------------------------------------
+    st.caption(f"{chore.duration} min", width=50)
+

@@ -6,13 +6,14 @@ suits better than the compact row list the Chores tab uses.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
 
 from ..domain.task import Category, Period
 from ..services.chore_service import ChoreService
+from .components import render_reschedule
 
 _CATEGORY_OPTIONS = [f"{cat.icon} {cat.label}" for cat in Category]
 _CATEGORY_LABEL_TO_ENUM = {f"{cat.icon} {cat.label}": cat for cat in Category}
@@ -21,7 +22,7 @@ _CATEGORY_LABEL_TO_ENUM = {f"{cat.icon} {cat.label}": cat for cat in Category}
 # in display order, category first per the latest layout request.
 _COLUMNS = [
     "id", "category", "name", "frequency_count", "frequency_period",
-    "priority", "initial_priority", "duration", "due_date", "done_date", "state", "changes",
+    "priority", "initial_priority", "duration", "due_date", "done_date", "state", "reschedule", "changes",
 ]
 
 
@@ -57,12 +58,13 @@ def _to_dataframe(service: ChoreService) -> pd.DataFrame | None:
             "due_date": c.due_date,
             "done_date": c.done_date,
             "state": state,
+            "reschedule": ":material/edit_calendar: Reporter",
             "changes": ":material/edit_note: Changes" if has_changes else None,
         })
     return pd.DataFrame.from_records(records, columns=_COLUMNS)
 
 
-def _column_config(on_show_changes) -> dict:
+def _column_config(on_show_changes, on_reschedule) -> dict:
     return {
         "id": None,
         "category": st.column_config.SelectboxColumn("Catégorie", options=_CATEGORY_OPTIONS, width="medium", required=True),
@@ -79,8 +81,9 @@ def _column_config(on_show_changes) -> dict:
         "due_date": st.column_config.DateColumn("Échéance", format="DD/MM/YYYY", disabled=True),
         "done_date": st.column_config.DateColumn("Fait le", format="DD/MM/YYYY", disabled=True),
         "state": st.column_config.TextColumn("État", disabled=True),
+        "reschedule": st.column_config.ButtonColumn("", on_click=on_reschedule, key="show_reschedule_button", alignment="left", width=100),
         "changes": st.column_config.ButtonColumn(
-            "", on_click=on_show_changes, key="show_changes_button", alignment="center", width="medium",
+            "", on_click=on_show_changes, key="show_changes_button", alignment="left", width=100,
         ),
     }
 
@@ -237,10 +240,41 @@ def render(service: ChoreService) -> None:
         click = st.session_state.show_changes_button
         _show_changes_dialog(click["row"])
 
+    @st.dialog("Reschedule chore")
+    def _show_reschedule_dialog(row: int) -> None:
+        row_df = st.session_state.library_df
+        chore_id = row_df.iloc[row]["id"]
+        chore = next((item for item in service.get_all() if item.id == chore_id), None)
+        if chore is None:
+            st.error("Chore not found.")
+            return
+
+        current_date = date.today()
+        next_due_date = service.next_due_date(chore_id, current_date)
+
+        render_reschedule(
+            chore=chore,
+            current_date=current_date,
+            next_due_date=next_due_date,
+            on_reschedule_today=lambda cid: service.reschedule(cid, current_date),
+            on_reschedule_weekend=lambda cid: service.reschedule(
+                cid, current_date + timedelta(days=(5 - current_date.weekday()) % 7)
+            ),
+            on_reschedule_next_due=lambda cid: (
+                service.reschedule(cid, next_due_date) if next_due_date else None
+            ),
+            on_reschedule_date=lambda cid, selected_date: service.reschedule(cid, selected_date),
+            on_cancel=lambda cid: st.rerun(),
+        )
+
+    def _on_reschedule_click() -> None:
+        click = st.session_state.show_reschedule_button
+        _show_reschedule_dialog(click["row"])
+
     key = st.session_state.library_grid_key
     st.data_editor(
         sorted_df,
-        column_config=_column_config(_on_show_changes_click),
+        column_config=_column_config(_on_show_changes_click, _on_reschedule_click),
         hide_index=True,
         width="content",
         height="content",
