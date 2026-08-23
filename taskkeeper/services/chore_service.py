@@ -137,7 +137,10 @@ class ChoreService:
             return
         for field_name, value in changes.items():
             old_value = getattr(chore, field_name)
-            chore.set_field(field_name, value)
+            if field_name == "done_date": 
+                chore.set_done_date(value)
+            else:
+                chore.set_field(field_name, value)
             if self._change_log is not None:
                 self._change_log.record_change(
                     chore_id, field_name, _serialize(old_value), _serialize(value)

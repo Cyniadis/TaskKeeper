@@ -21,8 +21,8 @@ _CATEGORY_LABEL_TO_ENUM = {f"{cat.icon} {cat.label}": cat for cat in Category}
 # id is kept but hidden (column_config["id"] = None) — everything else is
 # in display order, category first per the latest layout request.
 _COLUMNS = [
-    "id", "category", "name", "frequency_count", "frequency_period",
-    "priority", "initial_priority", "duration", "due_date", "done_date", "state", "reschedule", "changes",
+    "state", "id", "category", "name", "frequency_count", "frequency_period",
+    "priority", "initial_priority", "duration", "due_date", "done_date", "reschedule", "changes",
 ]
 
 
@@ -40,10 +40,10 @@ def _to_dataframe(service: ChoreService) -> pd.DataFrame | None:
     for c in chores:
         freq = c.frequency_obj
         state = (
-            "done" if c.is_completed()
-            else "cancelled" if c.is_cancelled()
-            else "rescheduled" if c.is_manually_rescheduled()
-            else "todo"
+            "✅" if c.is_completed()
+            else "❌" if c.is_cancelled()
+            else "📅" if c.is_manually_rescheduled()
+            else ""
         )
         has_changes = bool(service.changes_for(c.id))
         records.append({
@@ -67,20 +67,20 @@ def _to_dataframe(service: ChoreService) -> pd.DataFrame | None:
 def _column_config(on_show_changes, on_reschedule) -> dict:
     return {
         "id": None,
-        "category": st.column_config.SelectboxColumn("Catégorie", options=_CATEGORY_OPTIONS, width="medium", required=True),
-        "name": st.column_config.TextColumn("Tâche", width="large", required=True),
+        "category": st.column_config.SelectboxColumn("Catégorie", options=_CATEGORY_OPTIONS, required=True),
+        "name": st.column_config.TextColumn("Tâche", required=True),
         "frequency_count": st.column_config.NumberColumn(
-            "Tous les", min_value=1, step=1, format="%d", width="small", required=True,
+            "", min_value=1, step=1, format="%d", required=True,
         ),
         "frequency_period": st.column_config.SelectboxColumn(
-            "Période", options=[p.value for p in Period], width="small", required=True,
+            "Période", options=[p.value for p in Period], required=True,
         ),
         "priority": st.column_config.NumberColumn("Priorité", step=0.5, format="%.1f"),
         "initial_priority": st.column_config.NumberColumn("Priorité init.", step=0.5, format="%.1f", required=True),
         "duration": st.column_config.NumberColumn("Durée (min)", min_value=1, step=5, required=True),
         "due_date": st.column_config.DateColumn("Échéance", format="DD/MM/YYYY", disabled=True),
-        "done_date": st.column_config.DateColumn("Fait le", format="DD/MM/YYYY", disabled=True),
-        "state": st.column_config.TextColumn("État", disabled=True),
+        "done_date": st.column_config.DateColumn("Fait le", format="DD/MM/YYYY"),
+        "state": st.column_config.TextColumn("État", disabled=True, alignment="center"),
         "reschedule": st.column_config.ButtonColumn("", on_click=on_reschedule, key="show_reschedule_button", alignment="left", width=100),
         "changes": st.column_config.ButtonColumn(
             "", on_click=on_show_changes, key="show_changes_button", alignment="left", width=100,
@@ -113,7 +113,7 @@ def _apply_edited_rows(service: ChoreService, edited_rows: dict, df: pd.DataFram
         if "category" in changes:
             field_changes["category"] = _CATEGORY_LABEL_TO_ENUM.get(changes["category"], Category.OTHER)
 
-        for key in ("name", "priority", "initial_priority", "duration"):
+        for key in ("name", "priority", "initial_priority", "duration", "done_date"):
             if key in changes:
                 field_changes[key] = changes[key]
 
@@ -181,27 +181,27 @@ def render(service: ChoreService) -> None:
     )
 
     st.markdown("### Task Library")
-    st.caption("Bulk view and edit every recurring chore.")
 
-    with st.container(horizontal=True, vertical_alignment="center"):
-        st.download_button(
-            "⭳ Backup library",
-            data=service.export_json(),
-            file_name=f"taskkeeper_backup_{date.today().isoformat()}.json",
-            mime="application/json",
-        )
-        if st.button("⭱ Restore from backup"):
-            _restore_dialog(service)
+    cont = st.container(horizontal=True, vertical_alignment="center")
+    cont.download_button(
+        "⭳ Backup library",
+        data=service.export_json(),
+        file_name=f"taskkeeper_backup_{date.today().isoformat()}.json",
+        mime="application/json",
+    )
+    if cont.button("⭱ Restore from backup"):
+        _restore_dialog(service)
 
     df = _to_dataframe(service)
     if df is None:
         st.info("No chores yet — add one from the grid below.")
         df = pd.DataFrame(columns=_COLUMNS)
 
-    with st.container(horizontal=True, vertical_alignment="center"):
+    with cont.container(horizontal=True, vertical_alignment="center", gap="xsmall"):
+        st.markdown("**Sort by**")
         sort_col = st.selectbox(
             "Sort by", options=[c for c in df.columns if c not in ("id", "changes")],
-            key="library_sort_field", width=160,
+            key="library_sort_field", width=160, label_visibility="collapsed"
         )
         asc_label = "▲ Ascending" if st.session_state.library_sort_asc else "▼ Descending"
         st.button(
@@ -252,7 +252,7 @@ def render(service: ChoreService) -> None:
         current_date = date.today()
         next_due_date = service.next_due_date(chore_id, current_date)
 
-        render_reschedule(
+        if render_reschedule(
             chore=chore,
             current_date=current_date,
             next_due_date=next_due_date,
@@ -265,11 +265,14 @@ def render(service: ChoreService) -> None:
             ),
             on_reschedule_date=lambda cid, selected_date: service.reschedule(cid, selected_date),
             on_cancel=lambda cid: st.rerun(),
-        )
-
+            key_prefix="dialog"
+        ):
+            st.rerun()
+        
     def _on_reschedule_click() -> None:
         click = st.session_state.show_reschedule_button
         _show_reschedule_dialog(click["row"])
+        _reload_grid()
 
     key = st.session_state.library_grid_key
     st.data_editor(

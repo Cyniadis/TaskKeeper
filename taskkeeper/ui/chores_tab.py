@@ -149,5 +149,6 @@ def render(service: ChoreService, current_date: date) -> None:
                                 cid, service.next_due_date(cid, current_date)
                             ),
                             on_reschedule_date=lambda cid, d: service.reschedule(cid, d),
-                            on_cancel=lambda cid: service.cancel(cid)
+                            on_cancel=lambda cid: service.cancel(cid),
+                            key_prefix="popover"
                         )

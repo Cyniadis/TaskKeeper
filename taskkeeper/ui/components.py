@@ -71,21 +71,24 @@ def render_reschedule(
     on_reschedule_weekend: Callable[[str], None],
     on_reschedule_next_due: Callable[[str], None],
     on_reschedule_date: Callable[[str, date], None],
-    on_cancel: Callable[[str], None]
+    on_cancel: Callable[[str], None],
+    key_prefix: str
 ) -> None:
+    button_clicked = False
     with st.container():
         # Two quick-reschedule buttons side by side
         st.markdown(f"**{chore.category.icon} {chore.name}**")
         with st.container(horizontal=True, gap="small", width="stretch"):
-            st.button(
+            button_clicked = st.button(
                 "📅 Aujourd'hui",
-                key=f"resched_today_{chore.id}",
+                key=f"{key_prefix}_resched_today_{chore.id}",
                 width="stretch",
                 on_click=lambda cid=chore.id: on_reschedule_today(cid),
             )
+            button_clicked = button_clicked or \
             st.button(
                 "🛌 Week-end",
-                key=f"resched_weekend_{chore.id}",
+                key=f"{key_prefix}_resched_weekend_{chore.id}",
                 width="stretch",
                 on_click=lambda cid=chore.id: on_reschedule_weekend(cid),
             )
@@ -95,15 +98,17 @@ def render_reschedule(
                 if next_due_date
                 else "⏭ Prochaine échéance"
             )
+            button_clicked = button_clicked or \
             st.button(
                 next_label,
-                key=f"resched_next_{chore.id}",
+                key=f"{key_prefix}_resched_next_{chore.id}",
                 width="stretch",
                 on_click=lambda cid=chore.id: on_reschedule_next_due(cid),
             )
+            button_clicked = button_clicked or \
             st.button(
                 "✕ Annuler",
-                key=f"cancel_{chore.id}",
+                key=f"{key_prefix}_cancel_{chore.id}",
                 width="stretch",
                 on_click=lambda cid=chore.id: on_cancel(cid),
             )
@@ -113,15 +118,17 @@ def render_reschedule(
             picked = st.date_input(
                 "date",
                 value=current_date,
-                key=f"resched_pick_{chore.id}",
+                key=f"{key_prefix}_resched_pick_{chore.id}",
                 label_visibility="collapsed",
                 width="stretch",
             )
+            button_clicked = button_clicked or \
             st.button(
                 "OK",
-                key=f"resched_pick_btn_{chore.id}",
+                key=f"{key_prefix}_resched_pick_btn_{chore.id}",
                 on_click=lambda cid=chore.id, d=picked: on_reschedule_date(cid, d),
             )
+        return button_clicked
 
 
 def render_task_row(
