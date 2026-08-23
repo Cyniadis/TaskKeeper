@@ -20,8 +20,8 @@ import streamlit as st
 
 from ..domain.task import Category, OneTimeTask
 from ..services.chore_service import OneTimeTaskService
-from .components import inject_compact_css, render_sort_filter_toolbar
-from .format import format_date_fr, format_date_short_fr
+from .components import render_sort_filter_toolbar
+from .format import format_date_short_fr
 
 _SORT_FIELDS = {
     "Nom": lambda t: t.name.lower(),
@@ -173,7 +173,6 @@ def _render_add_form(service: OneTimeTaskService) -> None:
 
 def render(service: OneTimeTaskService, current_date: date) -> None:
     _init_state()
-    inject_compact_css()
 
     with st.container(width="content", horizontal_alignment="left"):
         _render_header(current_date)

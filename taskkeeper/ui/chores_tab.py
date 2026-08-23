@@ -12,7 +12,7 @@ import streamlit as st
 
 from ..domain.task import Category, RecurringChore
 from ..services.chore_service import ChoreService
-from .components import inject_compact_css, render_reschedule, render_sort_filter_toolbar, render_task_row
+from .components import render_reschedule, render_sort_filter_toolbar, render_task_row
 from .format import format_date_fr
 
 _SORT_FIELDS = {
@@ -59,7 +59,6 @@ def _render_progress(chores: list[RecurringChore], daily_budget: int) -> None:
 
 def render(service: ChoreService, current_date: date) -> None:
     _init_widget_state()
-    inject_compact_css()
 
     with st.container(width="content", horizontal_alignment="distribute"):
         _render_header(service, current_date)
