@@ -115,7 +115,7 @@ def _apply_edited_rows(service: ChoreService, edited_rows: dict, df: pd.DataFram
 
         for key in ("name", "priority", "initial_priority", "duration", "done_date"):
             if key in changes:
-                field_changes[key] = changes[key]
+                field_changes[key] = date.fromisoformat(changes[key])
 
         if field_changes:
             service.apply_edits(chore_id, field_changes)

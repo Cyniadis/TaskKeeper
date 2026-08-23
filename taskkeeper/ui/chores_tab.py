@@ -12,7 +12,7 @@ import streamlit as st
 
 from ..domain.task import Category, RecurringChore
 from ..services.chore_service import ChoreService
-from .components import render_reschedule, render_task_row
+from .components import inject_compact_css, render_reschedule, render_sort_filter_toolbar, render_task_row
 from .format import format_date_fr
 
 _SORT_FIELDS = {
@@ -30,8 +30,7 @@ def _init_widget_state() -> None:
     st.session_state.setdefault("chores_show_details", False)
     st.session_state.setdefault("chores_sort_field", "Priorité")
     st.session_state.setdefault("chores_sort_desc", True)
-    st.session_state.setdefault("chores_category_filter", "Tout")
-    st.session_state.setdefault("chores_add_form_open", False)
+    st.session_state.setdefault("chores_category_filter", [])
 
 
 def _render_header(service: ChoreService, current_date: date) -> None:
@@ -58,42 +57,13 @@ def _render_progress(chores: list[RecurringChore], daily_budget: int) -> None:
         st.progress(min(1.0, active_minutes / daily_budget) if daily_budget else 0.0, width=500)
 
 
-def _render_category_filter(chores: list[RecurringChore]) -> list[Category] | None:
-    used_categories = sorted({c.category for c in chores}, key=lambda cat: cat.label)
-    with st.container(horizontal=True, gap="xxsmall", vertical_alignment="center", width="content"):
-        st.markdown("**Filter**")
-        choices = st.multiselect("Catégorie", options=used_categories, key="chores_category_filter", width="stretch", 
-                                 label_visibility="collapsed", format_func=lambda cat: f"{cat.icon} {cat.label}")
-        return choices
-    return None
-
-def _render_toolbar() -> None:
-    """Sort field + direction + details toggle, all on one line."""
-    with st.container(horizontal=True, gap="xxsmall", vertical_alignment="center", width="content"):
-        st.markdown("**Sort by**")
-        st.selectbox(
-            "Sort by", options=list(_SORT_FIELDS.keys()), key="chores_sort_field",
-            width=140, label_visibility="collapsed", 
-        )
-        label = "▼ Descending" if st.session_state.chores_sort_desc else "▲ Ascending"
-        st.button(
-            label, key="chores_sort_dir", type="tertiary",
-            on_click=lambda: st.session_state.__setitem__(
-                "chores_sort_desc", not st.session_state.chores_sort_desc
-            ),
-    )
-    
-    with st.container(horizontal=True, gap="xsmall", vertical_alignment="center", width="content"):
-        st.markdown("**Details**")
-        st.toggle("Details", key="chores_show_details", label_visibility="collapsed")
-
-       
 def render(service: ChoreService, current_date: date) -> None:
     _init_widget_state()
+    inject_compact_css()
 
     with st.container(width="content", horizontal_alignment="distribute"):
         _render_header(service, current_date)
-        
+
         all_today = service.get_today(current_date)
         if not st.session_state.chores_show_completed:
             all_today = [c for c in all_today if not c.is_completed()]
@@ -102,53 +72,56 @@ def render(service: ChoreService, current_date: date) -> None:
                 c for c in all_today
                 if not (c.is_manually_rescheduled() and c.due_date != current_date)
             ]
-            
+
         _render_progress(all_today, st.session_state.chores_daily_budget)
-    
-        with st.container(horizontal=True, vertical_alignment="center", key="chores_sort_toolbar"):
-            _render_toolbar()
-            category_filter = _render_category_filter(all_today)
-            if category_filter is not None and len(category_filter) > 0:
-                all_today = [c for c in all_today if c.category in category_filter]
 
-            
-        key_fn = _SORT_FIELDS[st.session_state.chores_sort_field]
-        all_today = sorted(all_today, key=key_fn, reverse=st.session_state.chores_sort_desc)
+        key_fn, descending, category_filter = render_sort_filter_toolbar(
+            items=all_today,
+            sort_fields=_SORT_FIELDS,
+            get_category=lambda c: c.category,
+            sort_field_key="chores_sort_field",
+            sort_desc_key="chores_sort_desc",
+            show_details_key="chores_show_details",
+            category_filter_key="chores_category_filter",
+        )
 
+        if category_filter:
+            all_today = [c for c in all_today if c.category in category_filter]
+
+        all_today = sorted(all_today, key=key_fn, reverse=descending)
         show_details = st.session_state.chores_show_details
-        
+
         if not all_today:
             st.info("Aucune tâche à afficher pour ce filtre.")
         else:
             with st.container(gap=None, width="stretch"):
                 for chore in all_today:
-                    # Outer row — horizontal, vertically centred, wraps on narrow screens
                     with st.container(
                         key=f"chore_row_{chore.id}",
                         horizontal=True,
                         vertical_alignment="center",
                         horizontal_alignment="left",
                         gap="small",
-                        width=700
+                        width=700,
                     ):
                         render_task_row(
                             chore, current_date,
                             show_details=show_details,
-                            on_toggle=lambda cid: service.toggle_complete(cid, current_date)
+                            on_toggle=lambda cid: service.toggle_complete(cid, current_date),
                         )
-                        
+
                         with st.popover(":material/edit_calendar:", width="content"):
                             render_reschedule(
-                            chore, current_date,                
-                            next_due_date=service.next_due_date(chore.id, current_date),
-                            on_reschedule_today=lambda cid: service.reschedule(cid, current_date),
-                            on_reschedule_weekend=lambda cid: service.reschedule(
-                                cid, current_date + timedelta(days=(5 - current_date.weekday()) % 7)
-                            ),
-                            on_reschedule_next_due=lambda cid: service.reschedule(
-                                cid, service.next_due_date(cid, current_date)
-                            ),
-                            on_reschedule_date=lambda cid, d: service.reschedule(cid, d),
-                            on_cancel=lambda cid: service.cancel(cid),
-                            key_prefix="popover"
-                        )
+                                chore, current_date,
+                                next_due_date=service.next_due_date(chore.id, current_date),
+                                on_reschedule_today=lambda cid: service.reschedule(cid, current_date),
+                                on_reschedule_weekend=lambda cid: service.reschedule(
+                                    cid, current_date + timedelta(days=(5 - current_date.weekday()) % 7)
+                                ),
+                                on_reschedule_next_due=lambda cid: service.reschedule(
+                                    cid, service.next_due_date(cid, current_date)
+                                ),
+                                on_reschedule_date=lambda cid, d: service.reschedule(cid, d),
+                                on_cancel=lambda cid: service.cancel(cid),
+                                key_prefix="popover",
+                            )

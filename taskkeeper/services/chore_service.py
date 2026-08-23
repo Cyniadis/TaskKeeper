@@ -136,15 +136,15 @@ class ChoreService:
         if chore is None:
             return
         for field_name, value in changes.items():
-            old_value = getattr(chore, field_name)
-            if field_name == "done_date": 
-                chore.set_done_date(value)
-            else:
-                chore.set_field(field_name, value)
+            old_value = getattr(chore, field_name, None)
             if self._change_log is not None:
                 self._change_log.record_change(
                     chore_id, field_name, _serialize(old_value), _serialize(value)
                 )
+            if field_name == "done_date":
+                chore.set_done_date(value)
+            else:
+                chore.set_field(field_name, value)
         self._repo.update(chore)
 
     def changes_for(self, chore_id: str) -> list[tuple[str, str, str]]:

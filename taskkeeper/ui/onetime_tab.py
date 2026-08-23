@@ -3,8 +3,7 @@
 Layout mirrors the Chores tab:
   - Header with section title
   - Progress bar (active minutes / budget)
-  - Category filter pills
-  - Sort toolbar (field + direction toggle + details toggle)
+  - Shared sort + filter toolbar (render_sort_filter_toolbar)
   - Per-row: [✓] [icon] [name ~~~ :badge:] ──stretch── [detail?] [dur] [⋯]
   - ⋯ popover: schedule/unschedule + delete
   - Add-task form at the bottom
@@ -21,7 +20,7 @@ import streamlit as st
 
 from ..domain.task import Category, OneTimeTask
 from ..services.chore_service import OneTimeTaskService
-from .components import inject_compact_css
+from .components import inject_compact_css, render_sort_filter_toolbar
 from .format import format_date_fr, format_date_short_fr
 
 _SORT_FIELDS = {
@@ -37,69 +36,15 @@ def _init_state() -> None:
     st.session_state.setdefault("onetime_show_details", False)
     st.session_state.setdefault("onetime_sort_field", "Nom")
     st.session_state.setdefault("onetime_sort_desc", False)
-    st.session_state.setdefault("onetime_category_filter", "Tout")
+    st.session_state.setdefault("onetime_category_filter", [])
 
 
 # ---------------------------------------------------------------------------
-# Header / progress / filter / toolbar
+# Header / progress
 # ---------------------------------------------------------------------------
 
 def _render_header(current_date: date) -> None:
-    st.markdown(f"### One-time tasks · {format_date_fr(current_date)}")
-    st.caption("Tasks that don't recur — scheduled onto Today explicitly.")
-
-
-def _render_progress(tasks: list[OneTimeTask]) -> None:
-    scheduled = [t for t in tasks if t.is_manually_rescheduled()]
-    active_minutes = sum(t.duration for t in scheduled if not t.is_completed())
-    total_scheduled = len(scheduled)
-
-    with st.container(horizontal=True):
-        st.caption(
-            f"**{active_minutes} min** scheduled today · "
-            f"{sum(1 for t in tasks if t.is_completed())} done · "
-            f"{total_scheduled} on today's list"
-        )
-
-
-def _render_category_filter(tasks: list[OneTimeTask]) -> Category | None:
-    used = sorted({t.category for t in tasks}, key=lambda c: c.label)
-    options = ["Tout"] + [f"{cat.icon} {cat.label}" for cat in used]
-    choice = st.pills(
-        "Filter by category",
-        options=options,
-        key="onetime_category_filter",
-        label_visibility="collapsed",
-    )
-    if not choice or choice == "Tout":
-        return None
-    for cat in used:
-        if choice == f"{cat.icon} {cat.label}":
-            return cat
-    return None
-
-
-def _render_toolbar() -> None:
-    with st.container(horizontal=True, vertical_alignment="center", key="onetime_sort_toolbar"):
-        st.markdown("**Sort by**")
-        st.selectbox(
-            "Sort by",
-            options=list(_SORT_FIELDS.keys()),
-            key="onetime_sort_field",
-            width=140,
-            label_visibility="collapsed",
-        )
-        label = "▼ Descending" if st.session_state.onetime_sort_desc else "▲ Ascending"
-        st.button(
-            label,
-            key="onetime_sort_dir",
-            type="tertiary",
-            on_click=lambda: st.session_state.__setitem__(
-                "onetime_sort_desc", not st.session_state.onetime_sort_desc
-            ),
-        )
-        st.toggle("Details", key="onetime_show_details")
-        st.checkbox("Show completed", key="onetime_show_completed")
+    st.markdown(f"### One-time tasks")
 
 
 # ---------------------------------------------------------------------------
@@ -155,29 +100,28 @@ def _render_row(
         st.caption(f"{task.duration} min", width="content")
 
         # -- actions popover ------------------------------------------------
-        with st.popover("⋯", width="content"):
-            if is_scheduled:
+        with st.popover(":material/edit_calendar:", width="content"):
+            with st.container(horizontal=False):
+                if is_scheduled:
+                    st.button(
+                        "✓ Retirer d'aujourd'hui",
+                        key=f"onetime_unsched_{task.id}",
+                        width="stretch",
+                        on_click=lambda tid=task.id: service.unschedule(tid),
+                    )
+                else:
+                    st.button(
+                        "📅 Ajouter à aujourd'hui",
+                        key=f"onetime_sched_{task.id}",
+                        width="stretch",
+                        on_click=lambda tid=task.id: service.schedule_for_today(tid, current_date),
+                    )
                 st.button(
-                    "✓ Retirer d'aujourd'hui",
-                    key=f"onetime_unsched_{task.id}",
+                    "🗑 Supprimer",
+                    key=f"onetime_del_{task.id}",
                     width="stretch",
-                    on_click=lambda tid=task.id: service.unschedule(tid),
+                    on_click=lambda tid=task.id: service.remove([tid]),
                 )
-            else:
-                st.button(
-                    "📅 Ajouter à aujourd'hui",
-                    key=f"onetime_sched_{task.id}",
-                    width="stretch",
-                    on_click=lambda tid=task.id: service.schedule_for_today(tid, current_date),
-                )
-            st.divider()
-            st.button(
-                "🗑 Supprimer",
-                key=f"onetime_del_{task.id}",
-                width="stretch",
-                type="tertiary",
-                on_click=lambda tid=task.id: service.remove([tid]),
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -231,33 +175,34 @@ def render(service: OneTimeTaskService, current_date: date) -> None:
     _init_state()
     inject_compact_css()
 
-    with st.container(width="content", horizontal_alignment="distribute"):
+    with st.container(width="content", horizontal_alignment="left"):
         _render_header(current_date)
 
         all_tasks = service.get_all()
-
         if not st.session_state.onetime_show_completed:
             all_tasks = [t for t in all_tasks if not t.is_completed()]
 
-        _render_progress(all_tasks)
+        key_fn, descending, category_filter = render_sort_filter_toolbar(
+            items=all_tasks,
+            sort_fields=_SORT_FIELDS,
+            get_category=lambda t: t.category,
+            sort_field_key="onetime_sort_field",
+            sort_desc_key="onetime_sort_desc",
+            show_details_key="onetime_show_details",
+            category_filter_key="onetime_category_filter",
+            extra_toggles=[("Show completed", "onetime_show_completed")],
+        )
 
-        st.space("xsmall")
+        if category_filter:
+            all_tasks = [t for t in all_tasks if t.category in category_filter]
 
-        category_filter = _render_category_filter(all_tasks)
-        if category_filter is not None:
-            all_tasks = [t for t in all_tasks if t.category == category_filter]
-
-        _render_toolbar()
-
-        key_fn = _SORT_FIELDS[st.session_state.onetime_sort_field]
-        all_tasks = sorted(all_tasks, key=key_fn, reverse=st.session_state.onetime_sort_desc)
-
+        all_tasks = sorted(all_tasks, key=key_fn, reverse=descending)
         show_details = st.session_state.onetime_show_details
 
         if not all_tasks:
             st.info("Aucune tâche à afficher pour ce filtre.")
         else:
-            with st.container(gap=None):
+            with st.container(gap=None, width=500):
                 for task in all_tasks:
                     _render_row(task, current_date, service, show_details=show_details)
 
