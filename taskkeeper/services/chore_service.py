@@ -9,7 +9,7 @@ import json
 from datetime import date
 from enum import Enum
 
-from ..domain.selector import compute_daily_chores
+from ..domain.selector import compute_daily_chores, eligibility, Eligibility
 from ..domain.task import Category, OneTimeTask, RecurringChore
 from ..persistence.change_log import ChangeLog
 from ..persistence.repository import Repository
@@ -23,13 +23,12 @@ _FIELD_LABELS = {
     "duration": "Duration",
     "due_date": "Due date",
     "done_date": "Done date",
+    "prereq_id": "Prerequisite",
+    "prereq_window_days": "Prerequisite window",
 }
 
 
 def _serialize(value) -> str:
-    """String form used for change-log storage — .value for enums (not
-    Python's default Enum __str__, which would give 'Category.KITCHEN'
-    instead of 'kitchen'), isoformat for dates, str() otherwise."""
     if value is None:
         return ""
     if isinstance(value, Enum):
@@ -40,7 +39,6 @@ def _serialize(value) -> str:
 
 
 def _deserialize_for_field(chore: RecurringChore, field_name: str, raw: str):
-    """Inverse of _serialize, typed against the chore's current field."""
     if field_name == "category":
         return Category(raw) if raw else Category.OTHER
     current = getattr(chore, field_name, None)
@@ -51,6 +49,28 @@ def _deserialize_for_field(chore: RecurringChore, field_name: str, raw: str):
     if isinstance(current, int):
         return int(raw) if raw != "" else 0
     return raw
+
+
+def _detect_cycle(
+    chore_id: str,
+    new_prereq_id: str,
+    all_chores: list[RecurringChore],
+) -> bool:
+    """Return True if setting chore_id's prereq to new_prereq_id would
+    create a cycle (A → B → … → A). Uses a simple DFS on the prereq graph."""
+    index = {c.id: c for c in all_chores}
+    # Simulate the new edge
+    visited: set[str] = set()
+    current = new_prereq_id
+    while current:
+        if current == chore_id:
+            return True  # cycle detected
+        if current in visited:
+            break
+        visited.add(current)
+        node = index.get(current)
+        current = node.prereq_id if node else None
+    return False
 
 
 class ChoreService:
@@ -64,13 +84,15 @@ class ChoreService:
         return self._repo.get_all()
 
     def get_today(self, current_date: date) -> list[RecurringChore]:
-        from ..domain.selector import eligibility, Eligibility
-        chores = [c for c in self._repo.get_all() if not c.is_cancelled()]
+        all_chores = self._repo.get_all()
+        chore_index = {c.id: c for c in all_chores}
         return [
-            c for c in chores
-            if c.is_completed_on(current_date)
-            or c.is_manually_rescheduled()
-            or eligibility(c, current_date) is not Eligibility.NOT_ELIGIBLE
+            c for c in all_chores
+            if not c.is_cancelled() and (
+                c.is_completed_on(current_date)
+                or c.is_manually_rescheduled()
+                or eligibility(c, current_date, chore_index) is not Eligibility.NOT_ELIGIBLE
+            )
         ]
 
     def regenerate_today(self, current_date: date, daily_limit: int) -> list[RecurringChore]:
@@ -122,6 +144,11 @@ class ChoreService:
     def remove(self, chore_ids: list[str]) -> None:
         for chore_id in chore_ids:
             self._repo.delete(chore_id)
+            # Clear any other chore that pointed at this one as a prereq
+            for chore in self._repo.get_all():
+                if chore.prereq_id == chore_id:
+                    chore.prereq_id = None
+                    self._repo.update(chore)
 
     def next_due_date(self, chore_id: str, current_date: date) -> date | None:
         chore = self._repo.get(chore_id)
@@ -130,22 +157,61 @@ class ChoreService:
         return chore.get_next_due_date(chore.due_date or current_date)
 
     def apply_edits(self, chore_id: str, changes: dict) -> None:
-        """Apply several plain-field edits at once (Task Library grid
-        callback), logging each to the ChangeLog before applying."""
         chore = self._repo.get(chore_id)
         if chore is None:
             return
         for field_name, value in changes.items():
-            old_value = getattr(chore, field_name, None)
-            if self._change_log is not None:
-                self._change_log.record_change(
-                    chore_id, field_name, _serialize(old_value), _serialize(value)
-                )
+            old_value = getattr(chore, field_name)
             if field_name == "done_date":
                 chore.set_done_date(value)
             else:
                 chore.set_field(field_name, value)
+            if self._change_log is not None:
+                self._change_log.record_change(
+                    chore_id, field_name, _serialize(old_value), _serialize(value)
+                )
         self._repo.update(chore)
+
+    # -- prerequisite management --------------------------------------
+
+    def set_prereq(
+        self, chore_id: str, prereq_id: str | None, window_days: int = 1
+    ) -> None:
+        """Set (or clear) the prerequisite for a chore.
+
+        Raises ValueError if the new prereq would create a dependency cycle.
+        """
+        chore = self._repo.get(chore_id)
+        if chore is None:
+            return
+
+        if prereq_id is not None:
+            all_chores = self._repo.get_all()
+            if prereq_id not in {c.id for c in all_chores}:
+                raise ValueError(f"Prerequisite chore '{prereq_id}' not found.")
+            if _detect_cycle(chore_id, prereq_id, all_chores):
+                raise ValueError(
+                    "Setting this prerequisite would create a dependency cycle."
+                )
+
+        old_prereq = chore.prereq_id
+        chore.prereq_id = prereq_id
+        chore.prereq_window_days = window_days
+        self._repo.update(chore)
+
+        if self._change_log is not None:
+            self._change_log.record_change(
+                chore_id, "prereq_id", _serialize(old_prereq), _serialize(prereq_id)
+            )
+
+    def get_prereq(self, chore_id: str) -> RecurringChore | None:
+        """Return the prerequisite chore object, or None if unset/missing."""
+        chore = self._repo.get(chore_id)
+        if chore is None or not chore.prereq_id:
+            return None
+        return self._repo.get(chore.prereq_id)
+
+    # -- change log ---------------------------------------------------
 
     def changes_for(self, chore_id: str) -> list[tuple[str, str, str]]:
         if self._change_log is None:
@@ -221,17 +287,12 @@ class ChoreService:
         self._repo.replace_all(chores)
 
     def snapshot_baseline(self) -> None:
-        """Clears the change log for every current chore — called once
-        after a fresh load (process start / seed / restore), matching
-        the 'since the last full reload' semantics ChangeLog documents."""
         if self._change_log is not None:
             self._change_log.snapshot([c.id for c in self._repo.get_all()])
 
 
 class OneTimeTaskService:
-    """No frequency, no priority, no selector involvement — see
-    domain/task.py's OneTimeTask docstring for why this isn't a
-    ChoreService subclass."""
+    """No frequency, no priority, no selector involvement."""
 
     def __init__(self, repository: Repository[OneTimeTask]) -> None:
         self._repo = repository

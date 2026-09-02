@@ -14,16 +14,44 @@ from .task import RecurringChore
 
 
 class Eligibility(Enum):
-    NOT_ELIGIBLE = auto()    # already done today, cancelled, or not due yet
+    NOT_ELIGIBLE = auto()    # already done today, cancelled, prereq unmet, or not due yet
     MAYBE_ELIGIBLE = auto()  # never scheduled/done before — usable as filler
     ELIGIBLE = auto()        # due today, overdue, or its recurrence window elapsed
 
 
-def eligibility(chore: RecurringChore, current_date: date) -> Eligibility:
+def _prereq_satisfied(
+    prereq: RecurringChore,
+    current_date: date,
+    window_days: int,
+) -> bool:
+    """True when `prereq` was completed within `window_days` of `current_date`.
+
+    window_days=1 means today (days_since=0) or yesterday (days_since=1).
+    days_since=0 covers the "mark laundry done, regenerate, put-away appears"
+    same-day flow.
+    """
+    if prereq.done_date is None:
+        return False
+    days_since = (current_date - prereq.done_date).days
+    return 0 <= days_since <= window_days
+
+
+def eligibility(
+    chore: RecurringChore,
+    current_date: date,
+    chore_index: dict[str, RecurringChore] | None = None,
+) -> Eligibility:
     if chore.is_cancelled():
         return Eligibility.NOT_ELIGIBLE
     if chore.done_date == current_date:
         return Eligibility.NOT_ELIGIBLE
+
+    # -- prerequisite gate --------------------------------------------
+    if chore.prereq_id and chore_index is not None:
+        prereq = chore_index.get(chore.prereq_id)
+        if prereq is None or not _prereq_satisfied(prereq, current_date, chore.prereq_window_days):
+            return Eligibility.NOT_ELIGIBLE
+
     if chore.due_date == current_date:
         return Eligibility.ELIGIBLE
     if not chore.due_date or chore.due_date < current_date:
@@ -36,52 +64,27 @@ def eligibility(chore: RecurringChore, current_date: date) -> Eligibility:
     return Eligibility.NOT_ELIGIBLE
 
 
-def _select_by_priority(
-    chores: list[RecurringChore],
-    time_budget: int,
-    *,
-    priority_override_threshold: float = 8.0,
-) -> list[RecurringChore]:
-    """0/1 knapsack, favouring higher-priority chores.
-
-    Chores whose priority is at or above `priority_override_threshold` are
-    pulled out first and included unconditionally — they go on today's list
-    regardless of whether their duration fits the remaining budget.  The
-    knapsack then fills the leftover time with the rest.  This means a very
-    urgent chore can push the day slightly over budget rather than being
-    silently dropped because it didn't happen to fit in the remaining slot.
-    """
+def _select_by_priority(chores: list[RecurringChore], time_budget: int) -> list[RecurringChore]:
+    """0/1 knapsack, favouring higher-priority chores."""
     ordered = sorted(chores, key=lambda c: (-c.priority, c.due_date or date.max))
-
-    # Split: must-do (priority override) vs normal candidates.
-    must_do = [c for c in ordered if c.priority >= priority_override_threshold]
-    candidates = [c for c in ordered if c.priority < priority_override_threshold]
-
-    remaining = time_budget - sum(c.duration for c in must_do)
-
-    if not candidates or remaining <= 0:
-        return must_do
-
-    # Standard knapsack over the lower-priority candidates.
-    n = len(candidates)
-    dp = [[0] * (remaining + 1) for _ in range(n + 1)]
-    for i, chore in enumerate(candidates, start=1):
+    n = len(ordered)
+    dp = [[0] * (time_budget + 1) for _ in range(n + 1)]
+    for i, chore in enumerate(ordered, start=1):
         duration = chore.duration
-        for capacity in range(remaining + 1):
+        for capacity in range(time_budget + 1):
             if duration <= capacity:
                 dp[i][capacity] = max(dp[i - 1][capacity], dp[i - 1][capacity - duration] + duration)
             else:
                 dp[i][capacity] = dp[i - 1][capacity]
 
-    knapsack_selected: list[RecurringChore] = []
-    capacity = remaining
+    selected: list[RecurringChore] = []
+    capacity = time_budget
     for i in range(n, 0, -1):
         if dp[i][capacity] != dp[i - 1][capacity]:
-            chore = candidates[i - 1]
-            knapsack_selected.append(chore)
+            chore = ordered[i - 1]
+            selected.append(chore)
             capacity -= chore.duration
-
-    return must_do + knapsack_selected
+    return selected
 
 
 def compute_daily_chores(
@@ -92,7 +95,14 @@ def compute_daily_chores(
 ) -> list[RecurringChore]:
     """Return the subset of `chores` scheduled for `current_date`."""
     pre_selected = pre_selected or []
-    eligible = [c for c in chores if eligibility(c, current_date) is not Eligibility.NOT_ELIGIBLE]
+
+    # Build index once for prerequisite lookups throughout this call.
+    chore_index = {c.id: c for c in chores}
+
+    eligible = [
+        c for c in chores
+        if eligibility(c, current_date, chore_index) is not Eligibility.NOT_ELIGIBLE
+    ]
 
     for c in eligible:
         from .task import TaskDueDateState
