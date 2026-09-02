@@ -139,13 +139,7 @@ def _generate_id() -> str:
 
 @dataclass
 class Task:
-    """Common surface both RecurringChore and OneTimeTask carry.
-
-    Not an ABC on purpose here (kept a plain dataclass for simplicity in
-    this mockup — the architecture doc sketches it as an abstract base;
-    a real implementation would enforce complete()/uncomplete()/to_dict()
-    as abstract methods).
-    """
+    """Common surface both RecurringChore and OneTimeTask carry."""
     name: str
     category: Category = Category.OTHER
     duration: int = 0
@@ -175,12 +169,6 @@ class Task:
         return self.state.due_date_state == TaskDueDateState.MANUALLY_RESCHEDULED
 
     def set_field(self, field_name: str, value: Any) -> None:
-        """Generic setter shared by both subtypes' grid-edit callbacks.
-
-        due_date/done_date are intentionally excluded — those go through
-        dedicated methods (set_due_date/schedule_for/etc.) so the
-        due-date-state invariants can't be bypassed by a stray grid edit.
-        """
         if field_name in ("due_date", "done_date"):
             raise AttributeError(
                 f"{field_name!r} must be set via a dedicated method, not set_field()."
@@ -196,10 +184,18 @@ class Task:
 @dataclass
 class RecurringChore(Task):
     """A task that repeats on a frequency and competes for the daily time
-    budget via the priority-knapsack selector (see domain/selector.py)."""
+    budget via the priority-knapsack selector (see domain/selector.py).
+
+    prereq_id: optional id of another RecurringChore that must have been
+        completed within prereq_window_days before this one becomes eligible.
+    prereq_window_days: how many days back to look (0 = same day or later,
+        1 = today or yesterday, etc.). Defaults to 1.
+    """
     frequency: str = "1xjour"
     priority: float = 0.0
     initial_priority: float = 0.0
+    prereq_id: str | None = None
+    prereq_window_days: int = 1
 
     def __post_init__(self) -> None:
         self._pre_complete_priority: float | None = self.priority
@@ -267,6 +263,8 @@ class RecurringChore(Task):
             "frequency": self.frequency,
             "priority": self.priority,
             "initial_priority": self.initial_priority,
+            "prereq_id": self.prereq_id,
+            "prereq_window_days": self.prereq_window_days,
             "due_date": self._due_date.isoformat() if self._due_date else None,
             "done_date": self._done_date.isoformat() if self._done_date else None,
             "state": {"completed": self.state.completed, "due_date_state": self.state.due_date_state.value},
@@ -285,6 +283,8 @@ class RecurringChore(Task):
             frequency=data.get("frequency", "1xjour"),
             priority=data.get("priority", 0.0),
             initial_priority=data.get("initial_priority", 0.0),
+            prereq_id=data.get("prereq_id"),
+            prereq_window_days=data.get("prereq_window_days", 1),
         )
         chore._due_date = date.fromisoformat(due) if due else None
         chore._done_date = date.fromisoformat(done) if done else None
@@ -295,8 +295,7 @@ class RecurringChore(Task):
 
 @dataclass
 class OneTimeTask(Task):
-    """A task with no recurrence and no priority/knapsack participation.
-    `due_date` here means exactly one thing: scheduled for today or not."""
+    """A task with no recurrence and no priority/knapsack participation."""
 
     def schedule_for(self, current_date: date) -> None:
         self._due_date = current_date
