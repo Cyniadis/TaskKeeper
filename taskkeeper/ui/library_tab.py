@@ -162,7 +162,12 @@ def _apply_edited_rows(
         if "category" in changes:
             field_changes["category"] = _CATEGORY_LABEL_TO_ENUM.get(changes["category"], Category.OTHER)
 
-        for key in ("name", "priority", "initial_priority", "duration", "done_date"):
+
+        if "done_date" in changes:
+            field_changes["done_date"] = date.fromisoformat(changes["done_date"])
+            field_changes["due_date"] = service.next_due_date(chore_id, field_changes["done_date"])
+            
+        for key in ("name", "priority", "initial_priority", "duration"):
             if key in changes:
                 field_changes[key] = changes[key]
 
@@ -312,7 +317,7 @@ def render(service: ChoreService) -> None:
             return
 
         current_date = date.today()
-        next_due_date = service.next_due_date(chore_id, current_date)
+        next_due_date = service.next_due_date(chore_id, chore.due_date or current_date)
 
         if render_reschedule(
             chore=chore,

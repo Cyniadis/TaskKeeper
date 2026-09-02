@@ -14,6 +14,8 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
+from taskkeeper.domain.common import serialize_date
+
 
 # -- category -----------------------------------------------------------
 
@@ -265,8 +267,8 @@ class RecurringChore(Task):
             "initial_priority": self.initial_priority,
             "prereq_id": self.prereq_id,
             "prereq_window_days": self.prereq_window_days,
-            "due_date": self._due_date.isoformat() if self._due_date else None,
-            "done_date": self._done_date.isoformat() if self._done_date else None,
+            "due_date": serialize_date(self._due_date),
+            "done_date": serialize_date(self._done_date),
             "state": {"completed": self.state.completed, "due_date_state": self.state.due_date_state.value},
         }
 
@@ -319,8 +321,8 @@ class OneTimeTask(Task):
             "name": self.name,
             "category": self.category.value,
             "duration": self.duration,
-            "due_date": self._due_date.isoformat() if self._due_date else None,
-            "done_date": self._done_date.isoformat() if self._done_date else None,
+            "due_date": serialize_date(self._due_date),
+            "done_date": serialize_date(self._done_date),
             "state": {"completed": self.state.completed, "due_date_state": self.state.due_date_state.value},
         }
 
