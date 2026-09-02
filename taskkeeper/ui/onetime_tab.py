@@ -43,9 +43,38 @@ def _init_state() -> None:
 # Header / progress
 # ---------------------------------------------------------------------------
 
-def _render_header(current_date: date) -> None:
-    st.markdown(f"### One-time tasks")
+@st.dialog("Restore from backup")
+def _restore_dialog(service: OneTimeTaskService) -> None:
+    st.warning(
+        "⚠️ Restoring a backup will **replace your entire one-time task list** "
+        "and cannot be undone."
+    )
+    uploaded = st.file_uploader("Choose a backup JSON file", type=["json"], key="onetime_restore_uploader")
+    if uploaded is None:
+        return
+    try:
+        tasks = service.import_json(uploaded.getvalue())
+    except ValueError as exc:
+        st.error(f"Could not restore this backup:\n\n{exc}")
+        return
+    st.success(f"Backup looks valid — {len(tasks)} tasks found.")
+    st.caption("Click confirm below to replace your current list.")
+    if st.button("✅ Replace list and reload", type="primary", key="onetime_restore_confirm"):
+        service.restore_from_backup(tasks)
+        st.rerun()
 
+
+def _render_header(service: OneTimeTaskService, current_date: date) -> None:
+    st.markdown("### One-time tasks")
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.download_button(
+            "⭳ Backup list",
+            data=service.export_json(),
+            file_name=f"taskkeeper_onetime_backup_{current_date.isoformat()}.json",
+            mime="application/json",
+        )
+        if st.button("⭱ Restore from backup", key="onetime_restore_button"):
+            _restore_dialog(service)
 
 # ---------------------------------------------------------------------------
 # Individual task row
@@ -175,8 +204,8 @@ def render(service: OneTimeTaskService, current_date: date) -> None:
     _init_state()
 
     with st.container(width="content", horizontal_alignment="left"):
-        _render_header(current_date)
-
+        _render_header(service, current_date)
+        
         all_tasks = service.get_all()
         if not st.session_state.onetime_show_completed:
             all_tasks = [t for t in all_tasks if not t.is_completed()]

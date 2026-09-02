@@ -82,6 +82,27 @@ def _on_data_change(service: GroceryService, current_date: date) -> None:
     if editor_state["deleted_rows"]:
         deleted_ids = [df.iloc[pos]["id"] for pos in editor_state["deleted_rows"]]
         service.remove(deleted_ids)
+        
+        
+@st.dialog("Restore from backup")
+def _restore_dialog(service: GroceryService) -> None:
+    st.warning(
+        "⚠️ Restoring a backup will **replace your entire grocery list** "
+        "and cannot be undone."
+    )
+    uploaded = st.file_uploader("Choose a backup JSON file", type=["json"], key="groceries_restore_uploader")
+    if uploaded is None:
+        return
+    try:
+        items = service.import_json(uploaded.getvalue())
+    except ValueError as exc:
+        st.error(f"Could not restore this backup:\n\n{exc}")
+        return
+    st.success(f"Backup looks valid — {len(items)} items found.")
+    st.caption("Click confirm below to replace your current list.")
+    if st.button("✅ Replace list and reload", type="primary", key="groceries_restore_confirm"):
+        service.restore_from_backup(items)
+        st.rerun()
 
 
 def render(service: GroceryService, current_date: date) -> None:
@@ -94,8 +115,10 @@ def render(service: GroceryService, current_date: date) -> None:
             file_name=f"taskkeeper_groceries_backup_{current_date.isoformat()}.json",
             mime="application/json",
         )
+        if st.button("⭱ Restore from backup", key="groceries_restore_button"):
+            _restore_dialog(service)
         st.toggle("🛒 Grocery mode", key="groceries_mode")
-
+        
     items = service.get_all()
     if st.session_state.groceries_mode:
         items = [i for i in items if i.state != GroceryState.NOT_TO_BUY.value]

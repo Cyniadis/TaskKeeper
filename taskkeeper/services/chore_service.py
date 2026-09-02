@@ -286,3 +286,39 @@ class OneTimeTaskService:
     def export_json(self) -> bytes:
         payload = [t.to_dict() for t in self._repo.get_all()]
         return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+    def import_json(self, raw_bytes: bytes) -> list[OneTimeTask]:
+        try:
+            text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"File is not valid UTF-8 text: {exc}") from exc
+        try:
+            raw_data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"File is not valid JSON: {exc}") from exc
+        if not isinstance(raw_data, list):
+            raise ValueError("The file must contain a JSON array of tasks.")
+        if not raw_data:
+            raise ValueError("The backup file is empty.")
+        tasks: list[OneTimeTask] = []
+        seen_ids: set[str] = set()
+        for idx, item in enumerate(raw_data):
+            label = f"Task #{idx}"
+            if not isinstance(item, dict):
+                raise ValueError(f"{label}: expected a JSON object, got {type(item).__name__}.")
+            if "id" not in item or not isinstance(item["id"], str):
+                raise ValueError(f"{label}: missing or invalid 'id'.")
+            if item["id"] in seen_ids:
+                raise ValueError(f"{label}: duplicate id {item['id']}.")
+            if "name" not in item or not str(item.get("name", "")).strip():
+                raise ValueError(f"{label} (id={item['id']}): missing or empty 'name'.")
+            try:
+                task = OneTimeTask.from_dict(item)
+            except (KeyError, ValueError, TypeError) as exc:
+                raise ValueError(f"{label} ('{item.get('name', '?')}'): {exc}") from exc
+            seen_ids.add(task.id)
+            tasks.append(task)
+        return tasks
+
+    def restore_from_backup(self, tasks: list[OneTimeTask]) -> None:
+        self._repo.replace_all(tasks)

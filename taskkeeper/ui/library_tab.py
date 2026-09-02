@@ -158,7 +158,7 @@ def _restore_dialog(service: ChoreService) -> None:
 
     st.success(f"Backup looks valid — {len(chores)} chores found.")
     st.caption("Click confirm below to replace your current library.")
-    if st.button("✅ Replace library and reload", type="primary"):
+    if st.button("✅ Replace library and reload", type="primary", key="library_restore_confirm"):
         service.restore_from_backup(chores)
         _reload_grid()
         st.rerun()
@@ -189,7 +189,7 @@ def render(service: ChoreService) -> None:
         file_name=f"taskkeeper_backup_{date.today().isoformat()}.json",
         mime="application/json",
     )
-    if cont.button("⭱ Restore from backup"):
+    if cont.button("⭱ Restore from backup", key="library_restore_button"):
         _restore_dialog(service)
 
     df = _to_dataframe(service)
@@ -232,7 +232,7 @@ def render(service: ChoreService) -> None:
         for label, old, new in diffs:
             st.markdown(f"**{label}:** ~~{old or '—'}~~ → {new or '—'}")
 
-        if st.button("Discard changes"):
+        if st.button("Discard changes", key="library_discard_changes"):
             service.discard_changes(chore_id)
             st.rerun()
 

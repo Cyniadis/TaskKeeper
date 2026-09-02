@@ -45,7 +45,7 @@ def render(service: TimerService) -> None:
 
         with st.container(horizontal=True, horizontal_alignment="center", width="content"):
             if service.is_running():
-                st.button("⏸ Pause", on_click=service.pause, width="stretch")
+                st.button("⏸ Pause", on_click=service.pause, width="stretch", key="timer_pause_button")
             else:
-                st.button("▶️ Play", on_click=service.start, width="stretch")
-            st.button("⏹ Reset", on_click=service.reset, width="stretch")
+                st.button("▶️ Play", on_click=service.start, width="stretch", key="timer_start_button")
+            st.button("⏹ Reset", on_click=service.reset, width="stretch", key="timer_reset_button")

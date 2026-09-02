@@ -45,6 +45,7 @@ def _render_header(service: ChoreService, current_date: date) -> None:
         st.button(
             "🔄 Regenerate",
             on_click=lambda: service.regenerate_today(current_date, st.session_state.chores_daily_budget),
+            key="chores_regenerate_button"
         )
         st.checkbox("Show completed", key="chores_show_completed")
         st.checkbox("Show rescheduled", key="chores_show_rescheduled")
