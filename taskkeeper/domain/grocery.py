@@ -12,6 +12,8 @@ from datetime import date
 from enum import Enum
 from typing import Any
 
+from taskkeeper.domain.common import serialize_date
+
 
 class GroceryState(str, Enum):
     TO_BUY = "to_buy"
@@ -50,7 +52,7 @@ class GroceryItem:
             "id": self.id,
             "name": self.name,
             "state": self.state,
-            "last_bought_date": self.last_bought_date.isoformat() if self.last_bought_date else None,
+            "last_bought_date": serialize_date(self.last_bought_date),
         }
 
     @classmethod

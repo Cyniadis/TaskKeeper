@@ -144,13 +144,13 @@ def render(service: ChoreService, current_date: date) -> None:
                         with st.popover(":material/edit_calendar:", width="content"):
                             render_reschedule(
                                 chore, current_date,
-                                next_due_date=service.next_due_date(chore.id, current_date),
+                                next_due_date=service.next_due_date(chore.id, chore.due_date or current_date),
                                 on_reschedule_today=lambda cid: service.reschedule(cid, current_date),
                                 on_reschedule_weekend=lambda cid: service.reschedule(
                                     cid, current_date + timedelta(days=(5 - current_date.weekday()) % 7)
                                 ),
                                 on_reschedule_next_due=lambda cid: service.reschedule(
-                                    cid, service.next_due_date(cid, current_date)
+                                    cid, service.next_due_date(cid, chore.due_date or current_date)
                                 ),
                                 on_reschedule_date=lambda cid, d: service.reschedule(cid, d),
                                 on_cancel=lambda cid: service.cancel(cid),

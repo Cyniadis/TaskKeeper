@@ -150,11 +150,12 @@ class ChoreService:
                     chore.prereq_id = None
                     self._repo.update(chore)
 
-    def next_due_date(self, chore_id: str, current_date: date) -> date | None:
+    def next_due_date(self, chore_id: str, from_date: date = None) -> date | None:
         chore = self._repo.get(chore_id)
         if chore is None:
             return None
-        return chore.get_next_due_date(chore.due_date or current_date)
+            from_date = chore.due_date
+        return chore.get_next_due_date(from_date)
 
     def apply_edits(self, chore_id: str, changes: dict) -> None:
         chore = self._repo.get(chore_id)
@@ -164,6 +165,8 @@ class ChoreService:
             old_value = getattr(chore, field_name)
             if field_name == "done_date":
                 chore.set_done_date(value)
+            elif field_name == "due_date":
+                chore.set_due_date(value)
             else:
                 chore.set_field(field_name, value)
             if self._change_log is not None:
@@ -231,6 +234,8 @@ class ChoreService:
         for field_name, raw_old_value in reverted.items():
             if field_name == "due_date":
                 chore.set_due_date(date.fromisoformat(raw_old_value) if raw_old_value else None)
+            elif field_name == "done_date":
+                chore.set_done_date(date.fromisoformat(raw_old_value) if raw_old_value else None)
             else:
                 chore.set_field(field_name, _deserialize_for_field(chore, field_name, raw_old_value))
         self._repo.update(chore)
