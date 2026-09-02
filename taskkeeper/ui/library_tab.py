@@ -18,12 +18,14 @@ from .components import render_reschedule
 _CATEGORY_OPTIONS = [f"{cat.icon} {cat.label}" for cat in Category]
 _CATEGORY_LABEL_TO_ENUM = {f"{cat.icon} {cat.label}": cat for cat in Category}
 
-# id is kept but hidden (column_config["id"] = None) — everything else is
-# in display order, category first per the latest layout request.
 _COLUMNS = [
     "state", "id", "category", "name", "frequency_count", "frequency_period",
-    "priority", "initial_priority", "duration", "due_date", "done_date", "reschedule", "changes",
+    "priority", "initial_priority", "duration", "due_date", "done_date",
+    "prereq", "prereq_window_days", "reschedule", "changes",
 ]
+
+# Sentinel shown in the prereq selectbox when no prerequisite is set.
+_NO_PREREQ = "—"
 
 
 def _init_state() -> None:
@@ -32,7 +34,16 @@ def _init_state() -> None:
     st.session_state.setdefault("library_grid_key", "LibraryGrid1")
 
 
-def _to_dataframe(service: ChoreService) -> pd.DataFrame | None:
+def _build_prereq_options(service: ChoreService) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """Return (options_list, label→id map, id→label map) for the prereq selectbox."""
+    chores = service.get_all()
+    id_to_label = {c.id: f"{c.category.icon} {c.name}" for c in chores}
+    label_to_id = {v: k for k, v in id_to_label.items()}
+    options = [_NO_PREREQ] + sorted(id_to_label.values())
+    return options, label_to_id, id_to_label
+
+
+def _to_dataframe(service: ChoreService, id_to_label: dict[str, str]) -> pd.DataFrame | None:
     chores = service.get_all()
     if not chores:
         return None
@@ -46,6 +57,7 @@ def _to_dataframe(service: ChoreService) -> pd.DataFrame | None:
             else ""
         )
         has_changes = bool(service.changes_for(c.id))
+        prereq_label = id_to_label.get(c.prereq_id, _NO_PREREQ) if c.prereq_id else _NO_PREREQ
         records.append({
             "id": c.id,
             "category": f"{c.category.icon} {c.category.label}",
@@ -58,13 +70,19 @@ def _to_dataframe(service: ChoreService) -> pd.DataFrame | None:
             "due_date": c.due_date,
             "done_date": c.done_date,
             "state": state,
+            "prereq": prereq_label,
+            "prereq_window_days": c.prereq_window_days,
             "reschedule": ":material/edit_calendar: Reporter",
             "changes": ":material/edit_note: Changes" if has_changes else None,
         })
     return pd.DataFrame.from_records(records, columns=_COLUMNS)
 
 
-def _column_config(on_show_changes, on_reschedule) -> dict:
+def _column_config(
+    prereq_options: list[str],
+    on_show_changes,
+    on_reschedule,
+) -> dict:
     return {
         "id": None,
         "category": st.column_config.SelectboxColumn("Catégorie", options=_CATEGORY_OPTIONS, required=True),
@@ -81,26 +99,57 @@ def _column_config(on_show_changes, on_reschedule) -> dict:
         "due_date": st.column_config.DateColumn("Échéance", format="DD/MM/YYYY", disabled=True),
         "done_date": st.column_config.DateColumn("Fait le", format="DD/MM/YYYY"),
         "state": st.column_config.TextColumn("État", disabled=True, alignment="center"),
-        "reschedule": st.column_config.ButtonColumn("", on_click=on_reschedule, key="show_reschedule_button", alignment="left", width=100),
+        "prereq": st.column_config.SelectboxColumn(
+            "Prérequis",
+            options=prereq_options,
+            help="This chore only appears once the selected prerequisite chore has been completed.",
+            width=180,
+        ),
+        "prereq_window_days": st.column_config.NumberColumn(
+            "Fenêtre (j)",
+            min_value=0,
+            max_value=30,
+            step=1,
+            format="%d j",
+            help="How many days after the prerequisite was completed this chore stays eligible. 0 = same day only, 1 = today or yesterday, …",
+            width=90,
+        ),
+        "reschedule": st.column_config.ButtonColumn(
+            "", on_click=on_reschedule, key="show_reschedule_button", alignment="left", width=100,
+        ),
         "changes": st.column_config.ButtonColumn(
             "", on_click=on_show_changes, key="show_changes_button", alignment="left", width=100,
         ),
     }
 
 
-def _apply_added_row(service: ChoreService, new_row: dict) -> None:
+def _apply_added_row(service: ChoreService, new_row: dict, label_to_id: dict[str, str]) -> None:
     category = _CATEGORY_LABEL_TO_ENUM.get(new_row.get("category"), Category.OTHER)
     frequency = f"{int(new_row['frequency_count'])}x{new_row['frequency_period']}"
-    service.add(
+    chore = service.add(
         name=new_row["name"].strip(),
         category=category,
         frequency=frequency,
         duration=int(new_row["duration"]),
         initial_priority=float(new_row["initial_priority"]),
     )
+    # Apply prereq if provided in the add row
+    prereq_label = new_row.get("prereq", _NO_PREREQ)
+    if prereq_label and prereq_label != _NO_PREREQ:
+        prereq_id = label_to_id.get(prereq_label)
+        if prereq_id:
+            try:
+                service.set_prereq(chore.id, prereq_id, int(new_row.get("prereq_window_days", 1)))
+            except ValueError:
+                pass  # cycle guard — shouldn't happen on a brand-new chore
 
 
-def _apply_edited_rows(service: ChoreService, edited_rows: dict, df: pd.DataFrame) -> None:
+def _apply_edited_rows(
+    service: ChoreService,
+    edited_rows: dict,
+    df: pd.DataFrame,
+    label_to_id: dict[str, str],
+) -> None:
     for row_pos, changes in edited_rows.items():
         chore_id = df.iloc[row_pos]["id"]
         field_changes: dict = {}
@@ -115,21 +164,35 @@ def _apply_edited_rows(service: ChoreService, edited_rows: dict, df: pd.DataFram
 
         for key in ("name", "priority", "initial_priority", "duration", "done_date"):
             if key in changes:
-                field_changes[key] = date.fromisoformat(changes[key])
+                field_changes[key] = changes[key]
 
         if field_changes:
             service.apply_edits(chore_id, field_changes)
 
+        # Handle prereq changes separately (they go through set_prereq for
+        # cycle detection, not through the generic apply_edits path).
+        prereq_changed = "prereq" in changes
+        window_changed = "prereq_window_days" in changes
 
-def _on_data_change(service: ChoreService) -> None:
+        if prereq_changed or window_changed:
+            prereq_label = changes.get("prereq", df.iloc[row_pos]["prereq"])
+            window = int(changes.get("prereq_window_days", df.iloc[row_pos]["prereq_window_days"]))
+            new_prereq_id = label_to_id.get(prereq_label) if prereq_label != _NO_PREREQ else None
+            try:
+                service.set_prereq(chore_id, new_prereq_id, window)
+            except ValueError as exc:
+                st.error(str(exc))
+
+
+def _on_data_change(service: ChoreService, label_to_id: dict[str, str]) -> None:
     key = st.session_state.library_grid_key
     editor_state = st.session_state[key]
     df = st.session_state.library_df
 
     if editor_state["added_rows"]:
-        _apply_added_row(service, editor_state["added_rows"][-1])
+        _apply_added_row(service, editor_state["added_rows"][-1], label_to_id)
     if editor_state["edited_rows"]:
-        _apply_edited_rows(service, editor_state["edited_rows"], df)
+        _apply_edited_rows(service, editor_state["edited_rows"], df, label_to_id)
     if editor_state["deleted_rows"]:
         deleted_ids = [df.iloc[pos]["id"] for pos in editor_state["deleted_rows"]]
         service.remove(deleted_ids)
@@ -182,6 +245,8 @@ def render(service: ChoreService) -> None:
 
     st.markdown("### Task Library")
 
+    prereq_options, label_to_id, id_to_label = _build_prereq_options(service)
+
     cont = st.container(horizontal=True, vertical_alignment="center")
     cont.download_button(
         "⭳ Backup library",
@@ -192,7 +257,7 @@ def render(service: ChoreService) -> None:
     if cont.button("⭱ Restore from backup", key="library_restore_button"):
         _restore_dialog(service)
 
-    df = _to_dataframe(service)
+    df = _to_dataframe(service, id_to_label)
     if df is None:
         st.info("No chores yet — add one from the grid below.")
         df = pd.DataFrame(columns=_COLUMNS)
@@ -213,9 +278,6 @@ def render(service: ChoreService) -> None:
 
     sorted_df = df.sort_values(by=sort_col, ascending=st.session_state.library_sort_asc).reset_index(drop=True)
     st.session_state.library_df = sorted_df
-
-    # -- Changes dialog: nested closures so they can capture `service`
-    # without needing a module-level singleton. ------------------------
 
     @st.dialog("Changes")
     def _show_changes_dialog(row: int) -> None:
@@ -268,7 +330,7 @@ def render(service: ChoreService) -> None:
             key_prefix="dialog"
         ):
             st.rerun()
-        
+
     def _on_reschedule_click() -> None:
         click = st.session_state.show_reschedule_button
         _show_reschedule_dialog(click["row"])
@@ -277,11 +339,11 @@ def render(service: ChoreService) -> None:
     key = st.session_state.library_grid_key
     st.data_editor(
         sorted_df,
-        column_config=_column_config(_on_show_changes_click, _on_reschedule_click),
+        column_config=_column_config(prereq_options, _on_show_changes_click, _on_reschedule_click),
         hide_index=True,
         width="content",
         height="content",
         key=key,
         num_rows="dynamic",
-        on_change=lambda: _on_data_change(service),
+        on_change=lambda: _on_data_change(service, label_to_id),
     )

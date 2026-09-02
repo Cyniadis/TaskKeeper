@@ -1,5 +1,4 @@
-"""Shared row/status widgets for the Chores and One-time tabs.
-"""
+"""Shared row/status widgets for the Chores and One-time tabs."""
 from __future__ import annotations
 
 from datetime import date
@@ -8,6 +7,7 @@ from typing import Callable, TypeVar
 import streamlit as st
 
 from ..domain.task import Category, RecurringChore
+from ..domain.selector import _prereq_satisfied
 from .format import format_date_short_fr
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,6 @@ def _row_status(chore: RecurringChore, current_date: date) -> str:
 
 
 def _priority_dot(priority: float) -> str:
-    """Urgency tier as a single emoji — no CSS needed."""
     if priority >= 14:
         return "🔴"
     if priority >= 8:
@@ -145,7 +144,7 @@ def _name_markup(chore: RecurringChore, status: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Public row renderers
+# Public row renderer
 # ---------------------------------------------------------------------------
 
 def render_reschedule(
@@ -157,7 +156,7 @@ def render_reschedule(
     on_reschedule_next_due: Callable[[str], None],
     on_reschedule_date: Callable[[str, date], None],
     on_cancel: Callable[[str], None],
-    key_prefix: str,
+    key_prefix: str
 ) -> None:
     button_clicked = False
     with st.container():
@@ -169,7 +168,8 @@ def render_reschedule(
                 width="stretch",
                 on_click=lambda cid=chore.id: on_reschedule_today(cid),
             )
-            button_clicked = button_clicked or st.button(
+            button_clicked = button_clicked or \
+            st.button(
                 "🛌 Week-end",
                 key=f"{key_prefix}_resched_weekend_{chore.id}",
                 width="stretch",
@@ -181,13 +181,15 @@ def render_reschedule(
                 if next_due_date
                 else "⏭ Prochaine échéance"
             )
-            button_clicked = button_clicked or st.button(
+            button_clicked = button_clicked or \
+            st.button(
                 next_label,
                 key=f"{key_prefix}_resched_next_{chore.id}",
                 width="stretch",
                 on_click=lambda cid=chore.id: on_reschedule_next_due(cid),
             )
-            button_clicked = button_clicked or st.button(
+            button_clicked = button_clicked or \
+            st.button(
                 "✕ Annuler",
                 key=f"{key_prefix}_cancel_{chore.id}",
                 width="stretch",
@@ -202,7 +204,8 @@ def render_reschedule(
                 label_visibility="collapsed",
                 width="stretch",
             )
-            button_clicked = button_clicked or st.button(
+            button_clicked = button_clicked or \
+            st.button(
                 "OK",
                 key=f"{key_prefix}_resched_pick_btn_{chore.id}",
                 on_click=lambda cid=chore.id, d=picked: on_reschedule_date(cid, d),
@@ -216,14 +219,19 @@ def render_task_row(
     *,
     show_details: bool,
     on_toggle: Callable[[str], None],
+    chore_index: dict[str, RecurringChore] | None = None,
 ) -> None:
     """One chore row using st.container(horizontal=True) throughout.
 
-    Layout in both modes:
+    Layout:
       [✓] [dot] [icon] [name ~~~ :badge:]──stretch──  [detail?] [dur]  [⋯]
+
+    chore_index is passed in so the prereq badge can be resolved without
+    an extra repo call per row — the caller (chores_tab) builds it once.
     """
     status = _row_status(chore, current_date)
 
+    # -- checkbox -------------------------------------------------------
     st.checkbox(
         "done",
         value=(status == "done"),
@@ -233,22 +241,33 @@ def render_task_row(
         disabled=(status == "rescheduled"),
     )
 
+    # -- priority dot + category icon -----------------------------------
     st.markdown(_priority_dot(chore.priority), width="content")
     st.markdown(chore.category.icon, width=10)
 
-    with st.container(
-        horizontal=True,
-        vertical_alignment="center",
-        gap="small",
-        width="stretch",
-        horizontal_alignment="left",
-    ):
+    # -- name (stretches) + status badges -------------------------------
+    with st.container(horizontal=True, vertical_alignment="center",
+                      gap="small", width="stretch", horizontal_alignment="left"):
         st.markdown(_name_markup(chore, status), width="content")
+
         if status == "late":
             st.badge("en retard", color="red")
         elif status == "rescheduled":
             st.badge("reporté", color="orange")
 
+        # Prereq badge: shown when the chore has a prerequisite that is
+        # not yet satisfied — informational only (the selector already
+        # blocks it from the normal flow; it only appears here if the
+        # chore was manually rescheduled despite an unmet prereq).
+        if chore.prereq_id and chore_index is not None:
+            prereq = chore_index.get(chore.prereq_id)
+            if prereq is not None and not _prereq_satisfied(
+                prereq, current_date, chore.prereq_window_days
+            ):
+                prereq_label = f"{prereq.category.icon} {prereq.name}"
+                st.badge(f"attend : {prereq_label}", color="gray")
+
+    # -- detail extras --------------------------------------------------
     if show_details:
         with st.container(horizontal=True, width="content"):
             st.caption(f"{chore.priority:.1f}")
@@ -257,4 +276,5 @@ def render_task_row(
                 format_date_short_fr(shown_date) if shown_date else "—", width=80
             )
 
+    # -- duration -------------------------------------------------------
     st.caption(f"{chore.duration} min", width=50)
