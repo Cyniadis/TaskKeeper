@@ -230,7 +230,7 @@ def render(service: OneTimeTaskService, current_date: date) -> None:
         if not all_tasks:
             st.info("Aucune tâche à afficher pour ce filtre.")
         else:
-            with st.container(gap=None, width=500):
+            with st.container(gap=None, width=700):
                 for task in all_tasks:
                     _render_row(task, current_date, service, show_details=show_details)
 
