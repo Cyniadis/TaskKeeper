@@ -33,8 +33,8 @@ def _load_service(settings: SettingsStore) -> DropboxService | None:
     """
     # Prefer st.secrets, fall back to SettingsStore (user entered via form)
     try:
-        app_key = st.secrets["dropbox"]["app_key"]
-        app_secret = st.secrets["dropbox"]["app_secret"]
+        app_key = st.secrets["DROPBOX_APP_KEY"]
+        app_secret = st.secrets["DROPBOX_APP_SECRET"]
     except (KeyError, FileNotFoundError):
         app_key = settings.get(_KEY_APP_KEY, "")
         app_secret = settings.get(_KEY_APP_SECRET, "")
@@ -44,7 +44,7 @@ def _load_service(settings: SettingsStore) -> DropboxService | None:
 
     # Refresh token: secrets first, then SettingsStore (persisted after flow)
     try:
-        refresh_token = st.secrets["dropbox"]["refresh_token"]
+        refresh_token = st.secrets["DROPBOX_REFRESH_TOKEN"]
     except (KeyError, FileNotFoundError):
         refresh_token = settings.get(_KEY_REFRESH)
 

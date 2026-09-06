@@ -14,9 +14,9 @@ import urllib.request
 import json
 from pathlib import Path
 from typing import Any
+import streamlit as st
 
-
-REDIRECT_URI = "https://localhost"   # Dropbox requires one; we read the code from the URL bar
+REDIRECT_URI = st.secrets["DROPBOX_REDIRECT_URI"]     # Dropbox requires one; we read the code from the URL bar
 AUTHORIZE_URL = "https://www.dropbox.com/oauth2/authorize"
 TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 UPLOAD_URL = "https://content.dropboxapi.com/2/files/upload"
@@ -38,6 +38,7 @@ class DropboxService:
 
     def authorization_url(self) -> str:
         """Build the URL the user must visit to authorize the app."""
+        print(REDIRECT_URI)
         params = {
             "client_id": self.app_key,
             "response_type": "code",
@@ -51,6 +52,7 @@ class DropboxService:
 
         Returns the refresh_token string and also stores it on self.
         """
+        print(REDIRECT_URI)
         data = urllib.parse.urlencode({
             "code": code,
             "grant_type": "authorization_code",
