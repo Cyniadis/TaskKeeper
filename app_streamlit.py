@@ -1,11 +1,6 @@
 """TaskKeeper — Streamlit entry point.
 
-Persistence strategy:
-- SQLite in /tmp (fast, ephemeral — wiped on redeploy/restart)
-- Raw .db file synced to Dropbox (durable — pulled on cold start, pushed after writes)
-
-Set DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN in Streamlit secrets to
-enable sync. The app works without them (local dev).
+Run with: streamlit run app_streamlit.py
 """
 from __future__ import annotations
 
@@ -18,7 +13,6 @@ from pathlib import Path
 import streamlit as st
 
 from taskkeeper.persistence.change_log import ChangeLog
-from taskkeeper.persistence.dropbox_sync import DropboxSync
 from taskkeeper.persistence.grocery_repository import build_grocery_repository
 from taskkeeper.persistence.settings_store import SettingsStore
 from taskkeeper.persistence.task_repository import (
@@ -29,11 +23,9 @@ from taskkeeper.services.chore_service import ChoreService, OneTimeTaskService
 from taskkeeper.services.grocery_service import GroceryService
 from taskkeeper.services.timer_service import TimerService
 from taskkeeper.ui import chores_tab, groceries_tab, library_tab, onetime_tab, timer_tab
-from taskkeeper.ui import sync_status
+from taskkeeper.ui import settings_tab
 
-DB_PATH = Path(os.environ.get("TASKKEEPER_DB_PATH", "/tmp/taskkeeper.db"))
-
-_AUTOSAVE_KEY = "autosave_enabled"
+DB_PATH = Path(os.environ.get("TASKKEEPER_DB_PATH", "data/taskkeeper.db"))
 
 
 @dataclass
@@ -46,18 +38,7 @@ class Services:
 
 
 @st.cache_resource(show_spinner=False)
-def get_sync() -> DropboxSync | None:
-    return DropboxSync.from_secrets(DB_PATH)
-
-
-@st.cache_resource(show_spinner=False)
 def get_connection() -> sqlite3.Connection:
-    sync = get_sync()
-    if sync is not None:
-        msg = sync.pull()
-        if msg:
-            st.toast(msg, icon="✅")
-
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(str(DB_PATH), check_same_thread=False)
 
@@ -84,18 +65,6 @@ def build_services() -> Services:
     )
 
 
-def _auto_push(services: Services) -> None:
-    """Rate-limited push on every rerun — only when autosave is enabled."""
-    sync = get_sync()
-    if sync is None:
-        return
-    if not services.settings.get(_AUTOSAVE_KEY, True):
-        return
-    msg = sync.push()
-    if msg:
-        st.toast(msg, icon="☁️")
-
-
 def main() -> None:
     st.set_page_config(page_title="TaskKeeper", layout="wide")
 
@@ -113,16 +82,13 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
+    st.title("TaskKeeper", anchor=False)
+
     services = build_services()
     today = date.today()
 
-    st.title("TaskKeeper", anchor=False)
-    sync_status.render(get_sync(), services.settings, DB_PATH)
-
-    _auto_push(services)
-
-    chores_ui, library_ui, onetime_ui, groceries_ui, timer_ui = st.tabs(
-        ["📝 Chores", "📋 Library", "🗓️ One-time", "🛒 Groceries", "⏱️ Timer"]
+    chores_ui, library_ui, onetime_ui, groceries_ui, timer_ui, settings_ui = st.tabs(
+        ["📝 Chores", "📋 Library", "🗓️ One-time", "🛒 Groceries", "⏱️ Timer", "⚙️ Settings"]
     )
 
     with chores_ui:
@@ -139,6 +105,9 @@ def main() -> None:
 
     with timer_ui:
         timer_tab.render(services.timer)
+
+    with settings_ui:
+        settings_tab.render(services.settings, DB_PATH)
 
 
 if __name__ == "__main__":
