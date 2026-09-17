@@ -10,6 +10,7 @@ Toast messages fire on every save or import.
 """
 from __future__ import annotations
 
+import sqlite3
 import urllib.error
 from pathlib import Path
 
@@ -186,7 +187,7 @@ def _render_setup_expander(
 # Entry point
 # ---------------------------------------------------------------------------
 
-def render(settings: SettingsStore, db_path: Path) -> None:
+def render(settings: SettingsStore, db_path: Path, conn: "sqlite3.Connection | None" = None) -> None:
     st.markdown("### Settings")
 
     service = _load_service(settings)
@@ -198,7 +199,7 @@ def render(settings: SettingsStore, db_path: Path) -> None:
 
     if configured and autosave_on:
         try:
-            service.upload_db(db_path)
+            service.upload_db(db_path, conn)
             st.toast("Auto-saved to Dropbox", icon="☁️")
         except urllib.error.HTTPError as exc:
             body = ""
@@ -237,7 +238,7 @@ def render(settings: SettingsStore, db_path: Path) -> None:
             # Save now
             if st.button("💾 Save now", key="settings_save_now"):
                 try:
-                    meta = service.upload_db(db_path)
+                    meta = service.upload_db(db_path, conn)
                     size_kb = meta.get("size", 0) / 1024
                     st.toast(f"Saved ({size_kb:.1f} KB)", icon="✅")
                 except urllib.error.HTTPError as exc:
@@ -249,7 +250,7 @@ def render(settings: SettingsStore, db_path: Path) -> None:
             # Export to TaskKeeper/ folder on Dropbox
             if st.button("⬆️ Export to Dropbox", key="settings_export_btn"):
                 try:
-                    meta = service.export_to_dropbox(db_path)
+                    meta = service.export_to_dropbox(db_path, conn)
                     name = meta.get("name", "taskkeeper_export.db")
                     size_kb = meta.get("size", 0) / 1024
                     st.toast(f"Exported as {name} ({size_kb:.1f} KB)", icon="✅")

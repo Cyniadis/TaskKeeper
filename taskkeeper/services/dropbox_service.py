@@ -17,6 +17,7 @@ quickly with a 409 when the path is absent.
 from __future__ import annotations
 
 import json
+import sqlite3
 import urllib.parse
 import urllib.request
 from datetime import date
@@ -197,35 +198,59 @@ class DropboxService:
     # Public upload
     # ------------------------------------------------------------------
 
-    def upload_db(self, db_path: Path) -> dict:
+    @staticmethod
+    def _flush_to_disk(conn: "sqlite3.Connection") -> None:
+        """Force all WAL frames into the main database file so that
+        read_bytes() on the path sees a fully consistent snapshot.
+
+        TRUNCATE mode checkpoints and resets the WAL to zero length —
+        safe to call on a live connection because SQLite re-creates the
+        WAL on the next write. Silently ignored if the connection is in
+        journal (non-WAL) mode, since there is nothing to checkpoint.
+        """
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.commit()
+
+    def upload_db(self, db_path: Path, conn: "sqlite3.Connection | None" = None) -> dict:
         """Upload `db_path` to Dropbox at DROPBOX_PATH, overwriting.
 
-        Before the first upload of each calendar day, the existing remote
-        file is copied to /taskkeeper_backup_YYYY-MM-DD.db so that the
-        previous day's state is preserved. Subsequent uploads on the same
+        Pass the live SQLite `conn` so the WAL is checkpointed before
+        the file is read — without this the on-disk file may be smaller
+        than the live database because unflushed WAL frames are missing.
+
+        Before the first upload of each calendar day the existing remote
+        file is copied to a dated backup path. Subsequent uploads that
         day skip this step.
 
         Returns the Dropbox file metadata dict for the main upload.
         Raises urllib.error.HTTPError on API errors.
         """
+        if conn is not None:
+            self._flush_to_disk(conn)
+
         # Daily backup — best-effort: a failure here should not block saving.
         try:
             self._ensure_daily_backup()
         except Exception:
-            pass  # logged by caller if desired; never prevent the live save
+            pass
 
         db_bytes = db_path.read_bytes()
         return self._upload_bytes(db_bytes, DROPBOX_PATH, overwrite=True)
 
-    def export_to_dropbox(self, db_path: Path) -> dict:
+    def export_to_dropbox(self, db_path: Path, conn: "sqlite3.Connection | None" = None) -> dict:
         """Copy the local DB to TaskKeeper/taskkeeper_export_YYYY-MM-DD.db.
 
-        Uses autorename=True so repeated exports on the same day produce
-        _export_2026-09-17.db, _export_2026-09-17 (1).db, etc. rather than
-        silently overwriting an earlier export.
+        Pass the live SQLite `conn` to checkpoint the WAL before reading,
+        for the same reason as upload_db.
+
+        Uses autorename so repeated exports on the same day get unique
+        names rather than overwriting each other.
 
         Returns the Dropbox file metadata dict.
         """
+        if conn is not None:
+            self._flush_to_disk(conn)
+
         db_bytes = db_path.read_bytes()
         return self._upload_bytes(db_bytes, _export_path(), overwrite=False)
 

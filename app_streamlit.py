@@ -40,7 +40,12 @@ class Services:
 @st.cache_resource(show_spinner=False)
 def get_connection() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    # WAL mode gives better write concurrency and is required for a correct
+    # wal_checkpoint(TRUNCATE) in the Dropbox upload path.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.commit()
+    return conn
 
 
 @st.cache_resource(show_spinner=False)
@@ -85,6 +90,7 @@ def main() -> None:
     st.title("TaskKeeper", anchor=False)
 
     services = build_services()
+    conn = get_connection()
     today = date.today()
 
     chores_ui, library_ui, onetime_ui, groceries_ui, timer_ui, settings_ui = st.tabs(
@@ -107,7 +113,7 @@ def main() -> None:
         timer_tab.render(services.timer)
 
     with settings_ui:
-        settings_tab.render(services.settings, DB_PATH)
+        settings_tab.render(services.settings, DB_PATH, conn)
 
 
 if __name__ == "__main__":
