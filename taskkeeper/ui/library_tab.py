@@ -258,6 +258,7 @@ def render(service: ChoreService) -> None:
         data=service.export_json(),
         file_name=f"taskkeeper_backup_{date.today().isoformat()}.json",
         mime="application/json",
+        disabled=not service.get_all()
     )
     if cont.button("⭱ Restore from backup", key="library_restore_button"):
         _restore_dialog(service)

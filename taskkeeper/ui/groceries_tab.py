@@ -114,6 +114,7 @@ def render(service: GroceryService, current_date: date) -> None:
             "⭳ Backup list", data=service.export_json(),
             file_name=f"taskkeeper_groceries_backup_{current_date.isoformat()}.json",
             mime="application/json",
+            disabled=not service.get_all(),
         )
         if st.button("⭱ Restore from backup", key="groceries_restore_button"):
             _restore_dialog(service)
