@@ -90,8 +90,29 @@ def _render_import_from_dropbox(db_path: Path, service: DropboxService) -> None:
 
 
 # ---------------------------------------------------------------------------
-# OAuth setup (inside expander)
+# Local import dialog
 # ---------------------------------------------------------------------------
+
+@st.dialog("Import from computer")
+def _render_import_from_computer(db_path: Path) -> None:
+    st.warning(
+        "⚠️ This will replace your current database with the uploaded file. "
+        "This cannot be undone."
+    )
+    uploaded = st.file_uploader(
+        "Choose a TaskKeeper .db file", type=["db"], key="settings_local_import_uploader"
+    )
+    if uploaded is None:
+        return
+    st.caption(f"{uploaded.name} · {len(uploaded.getvalue()) / 1024:.1f} KB")
+    if st.button("✅ Replace and reload", type="primary", key="settings_local_import_confirm"):
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_bytes(uploaded.getvalue())
+        st.cache_resource.clear()
+        st.toast("Database imported — reloading…", icon="✅")
+        st.rerun()
+
+
 
 def _render_credentials_form(settings: SettingsStore) -> None:
     st.markdown(
@@ -265,6 +286,26 @@ def render(settings: SettingsStore, db_path: Path, conn: "sqlite3.Connection | N
             # Import from TaskKeeper/ folder on Dropbox
             if st.button("⬇️ Import from Dropbox", key="settings_import_btn"):
                 _render_import_from_dropbox(db_path, service)
+
+        # -- Local export (download) — always available --------------------
+        try:
+            import datetime as _dt
+            if conn is not None:
+                DropboxService._flush_to_disk(conn)
+            db_bytes = db_path.read_bytes()
+            st.download_button(
+                "⬇️ Export to computer",
+                data=db_bytes,
+                file_name=f"taskkeeper_{_dt.date.today().isoformat()}.db",
+                mime="application/octet-stream",
+                key="settings_local_export",
+            )
+        except FileNotFoundError:
+            st.button("⬇️ Export to computer", disabled=True, key="settings_local_export_disabled")
+
+        # -- Local import (upload) — always available ----------------------
+        if st.button("⬆️ Import from computer", key="settings_local_import_btn"):
+            _render_import_from_computer(db_path)
 
     # Error detail (shown only when status is red)
     if error_msg:

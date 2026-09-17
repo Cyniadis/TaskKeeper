@@ -40,12 +40,13 @@ class Services:
 @st.cache_resource(show_spinner=False)
 def get_connection() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    return sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    # conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     # WAL mode gives better write concurrency and is required for a correct
     # wal_checkpoint(TRUNCATE) in the Dropbox upload path.
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.commit()
-    return conn
+    # conn.execute()
+    # conn.commit()
+    # return conn
 
 
 @st.cache_resource(show_spinner=False)

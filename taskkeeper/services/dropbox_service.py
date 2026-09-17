@@ -200,15 +200,17 @@ class DropboxService:
 
     @staticmethod
     def _flush_to_disk(conn: "sqlite3.Connection") -> None:
-        """Force all WAL frames into the main database file so that
-        read_bytes() on the path sees a fully consistent snapshot.
+        """Checkpoint as many WAL frames as possible into the main DB file.
 
-        TRUNCATE mode checkpoints and resets the WAL to zero length —
-        safe to call on a live connection because SQLite re-creates the
-        WAL on the next write. Silently ignored if the connection is in
-        journal (non-WAL) mode, since there is nothing to checkpoint.
+        Uses PASSIVE mode — it checkpoints without acquiring an exclusive
+        lock, so it is safe to call while other readers/writers still have
+        the connection open (as is always the case with the cached
+        st.cache_resource connection). Frames that are still in active use
+        by a reader are skipped; they will be included in the next
+        checkpoint. TRUNCATE/FULL would deadlock here because the same
+        connection holds open transactions from the current render pass.
         """
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
         conn.commit()
 
     def upload_db(self, db_path: Path, conn: "sqlite3.Connection | None" = None) -> dict:
