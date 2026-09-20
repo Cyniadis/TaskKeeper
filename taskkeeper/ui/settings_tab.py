@@ -1,17 +1,9 @@
-"""Settings tab: Dropbox auto-save configuration.
-
-Layout (compact single row)
-----------------------------
-  [status badge]  [Auto-save toggle]  [💾 Save now]  [⬇️ Export]  [⬆️ Import]
-  (error detail below if red)
-  ── expander: Dropbox setup / disconnect / secrets snippet ──
-
-Toast messages fire on every save or import.
-"""
+"""Settings tab: Dropbox auto-save configuration."""
 from __future__ import annotations
 
 import sqlite3
 import urllib.error
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -19,11 +11,13 @@ import streamlit as st
 from ..persistence.settings_store import SettingsStore
 from ..services.dropbox_service import DropboxService
 
-_KEY_APP_KEY  = "dropbox_app_key"
+_KEY_APP_KEY    = "dropbox_app_key"
 _KEY_APP_SECRET = "dropbox_app_secret"
-_KEY_REFRESH  = "dropbox_refresh_token"
-_KEY_AUTOSAVE = "dropbox_autosave_enabled"
-_STEP_KEY     = "dbx_oauth_step"
+_KEY_REFRESH    = "dropbox_refresh_token"
+_KEY_AUTOSAVE   = "dropbox_autosave_enabled"
+_STEP_KEY       = "dbx_oauth_step"
+
+_MIN_DB_SIZE_BYTES = 16_384  # 16 KB — blank SQLite is ≤ 8 KB
 
 
 # ---------------------------------------------------------------------------
@@ -64,21 +58,62 @@ def _clear_credentials(settings: SettingsStore) -> None:
     settings.set(_KEY_REFRESH, "")
 
 
+def _db_is_safe_to_upload(db_path: Path) -> bool:
+    return db_path.exists() and db_path.stat().st_size >= _MIN_DB_SIZE_BYTES
+
+
 # ---------------------------------------------------------------------------
-# Import dialog
+# Import from Dropbox dialog — with file picker
 # ---------------------------------------------------------------------------
+
+def _fmt_file_entry(entry: dict) -> str:
+    """Human-readable label: 'taskkeeper.db  (56.2 KB, 2026-09-17 14:32)'"""
+    name = entry["name"]
+    size_kb = entry.get("size", 0) / 1024
+    modified_raw = entry.get("server_modified", "")
+    try:
+        dt = datetime.strptime(modified_raw, "%Y-%m-%dT%H:%M:%SZ")
+        modified = dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        modified = modified_raw or "—"
+    return f"{name}  ({size_kb:.1f} KB, {modified})"
+
 
 @st.dialog("Import from Dropbox")
 def _render_import_from_dropbox(db_path: Path, service: DropboxService) -> None:
     st.warning(
-        "⚠️ This will download **TaskKeeper/taskkeeper.db** from your Dropbox and "
+        "⚠️ This will download the selected file from your Dropbox and "
         "replace your current local database. This cannot be undone."
     )
+
+    with st.spinner("Listing files in TaskKeeper/…"):
+        try:
+            files = service.list_db_files()
+        except Exception as exc:
+            st.error(f"Could not list Dropbox files: {exc}")
+            return
+
+    if not files:
+        st.info("No .db files found in your TaskKeeper Dropbox folder.")
+        return
+
+    labels = [_fmt_file_entry(f) for f in files]
+    chosen_label = st.radio(
+        "Choose a file to import",
+        options=labels,
+        index=0,
+        key="settings_import_file_radio",
+    )
+    chosen_idx = labels.index(chosen_label)
+    chosen_path = files[chosen_idx]["path_lower"]
+
+    st.caption(f"Remote path: `{chosen_path}`")
+
     if st.button("✅ Replace and reload", type="primary", key="settings_import_confirm"):
         try:
-            size = service.import_from_dropbox(db_path)
+            size = service.import_from_dropbox(db_path, remote_path=chosen_path)
             st.cache_resource.clear()
-            st.toast(f"Imported from Dropbox ({size / 1024:.1f} KB) — reloading…", icon="✅")
+            st.toast(f"Imported {files[chosen_idx]['name']} ({size / 1024:.1f} KB) — reloading…", icon="✅")
             st.rerun()
         except FileNotFoundError as exc:
             st.error(str(exc))
@@ -113,6 +148,9 @@ def _render_import_from_computer(db_path: Path) -> None:
         st.rerun()
 
 
+# ---------------------------------------------------------------------------
+# Credentials / OAuth forms
+# ---------------------------------------------------------------------------
 
 def _render_credentials_form(settings: SettingsStore) -> None:
     st.markdown(
@@ -174,10 +212,7 @@ def _render_oauth_flow(service: DropboxService, settings: SettingsStore) -> None
                 st.rerun()
 
 
-def _render_setup_expander(
-    service: DropboxService | None,
-    settings: SettingsStore,
-) -> None:
+def _render_setup_expander(service: DropboxService | None, settings: SettingsStore) -> None:
     label = "⚙️ Dropbox setup" if (service is None or not service.is_configured()) else "⚙️ Dropbox"
     with st.expander(label):
         if service is None:
@@ -185,7 +220,6 @@ def _render_setup_expander(
         elif not service.is_configured():
             _render_oauth_flow(service, settings)
         else:
-            # Fully configured — show secrets snippet + disconnect
             try:
                 app_key    = st.secrets["DROPBOX_APP_KEY"]
                 app_secret = st.secrets["DROPBOX_APP_SECRET"]
@@ -214,11 +248,10 @@ def render(settings: SettingsStore, db_path: Path, conn: "sqlite3.Connection | N
     service = _load_service(settings)
     configured = service is not None and service.is_configured()
 
-    # -- Silent auto-save on page load -------------------------------------
     autosave_on = settings.get(_KEY_AUTOSAVE, True)
     error_msg: str | None = None
 
-    if configured and autosave_on:
+    if configured and autosave_on and _db_is_safe_to_upload(db_path):
         try:
             service.upload_db(db_path, conn)
             st.toast("Auto-saved to Dropbox", icon="☁️")
@@ -232,10 +265,8 @@ def render(settings: SettingsStore, db_path: Path, conn: "sqlite3.Connection | N
         except Exception as exc:
             error_msg = str(exc)
 
-    # -- Single compact control row ----------------------------------------
     with st.container(horizontal=True, vertical_alignment="center", gap="small"):
 
-        # Status badge
         if not configured:
             st.badge("⚙️ Not configured", color="gray")
         elif error_msg:
@@ -243,7 +274,6 @@ def render(settings: SettingsStore, db_path: Path, conn: "sqlite3.Connection | N
         else:
             st.badge("✅ Connected", color="green")
 
-        # Controls only shown when Dropbox is configured
         if configured:
             def _on_autosave_change() -> None:
                 settings.set(_KEY_AUTOSAVE, st.session_state.settings_autosave_toggle)
@@ -256,19 +286,20 @@ def render(settings: SettingsStore, db_path: Path, conn: "sqlite3.Connection | N
                 on_change=_on_autosave_change,
             )
 
-            # Save now
             if st.button("💾 Save now", key="settings_save_now"):
-                try:
-                    meta = service.upload_db(db_path, conn)
-                    size_kb = meta.get("size", 0) / 1024
-                    st.toast(f"Saved ({size_kb:.1f} KB)", icon="✅")
-                except urllib.error.HTTPError as exc:
-                    body = exc.read().decode(errors="replace")
-                    st.error(f"Save failed ({exc.code}): {body}")
-                except Exception as exc:
-                    st.error(f"Save failed: {exc}")
+                if not _db_is_safe_to_upload(db_path):
+                    st.error("Local database appears empty — refusing to overwrite Dropbox.")
+                else:
+                    try:
+                        meta = service.upload_db(db_path, conn)
+                        size_kb = meta.get("size", 0) / 1024
+                        st.toast(f"Saved ({size_kb:.1f} KB)", icon="✅")
+                    except urllib.error.HTTPError as exc:
+                        body = exc.read().decode(errors="replace")
+                        st.error(f"Save failed ({exc.code}): {body}")
+                    except Exception as exc:
+                        st.error(f"Save failed: {exc}")
 
-            # Export to TaskKeeper/ folder on Dropbox
             if st.button("⬆️ Export to Dropbox", key="settings_export_btn"):
                 try:
                     meta = service.export_to_dropbox(db_path, conn)
@@ -283,11 +314,9 @@ def render(settings: SettingsStore, db_path: Path, conn: "sqlite3.Connection | N
                 except Exception as exc:
                     st.error(f"Export failed: {exc}")
 
-            # Import from TaskKeeper/ folder on Dropbox
             if st.button("⬇️ Import from Dropbox", key="settings_import_btn"):
                 _render_import_from_dropbox(db_path, service)
 
-        # -- Local export (download) — always available --------------------
         try:
             import datetime as _dt
             if conn is not None:
@@ -303,13 +332,10 @@ def render(settings: SettingsStore, db_path: Path, conn: "sqlite3.Connection | N
         except FileNotFoundError:
             st.button("⬇️ Export to computer", disabled=True, key="settings_local_export_disabled")
 
-        # -- Local import (upload) — always available ----------------------
         if st.button("⬆️ Import from computer", key="settings_local_import_btn"):
             _render_import_from_computer(db_path)
 
-    # Error detail (shown only when status is red)
     if error_msg:
         st.caption(f"⚠️ {error_msg}")
 
-    # Setup expander
     _render_setup_expander(service, settings)

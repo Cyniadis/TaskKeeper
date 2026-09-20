@@ -38,15 +38,40 @@ class Services:
 
 
 @st.cache_resource(show_spinner=False)
+def pull_from_dropbox_once() -> tuple[str | None, str | None]:
+    """Pull the DB from Dropbox exactly once per process lifetime,
+    before the SQLite connection is opened.
+
+    Returns (success_message, error_message) — one of the two will be None.
+    """
+    if DB_PATH.exists():
+        return None, None  # warm restart — file already on disk
+
+    try:
+        app_key = st.secrets["DROPBOX_APP_KEY"]
+        app_secret = st.secrets["DROPBOX_APP_SECRET"]
+        refresh = st.secrets["DROPBOX_REFRESH_TOKEN"]
+    except (KeyError, FileNotFoundError):
+        return None, None  # Dropbox not configured — skip silently
+
+    from taskkeeper.services.dropbox_service import DropboxService
+
+    svc = DropboxService(app_key, app_secret, refresh)
+    try:
+        size = svc.import_from_dropbox(DB_PATH)
+        return f"📥 Pulled from Dropbox ({size / 1024:.1f} KB)", None
+    except FileNotFoundError:
+        return None, None  # no remote file yet — first-ever deploy
+    except Exception as exc:
+        # Surface the error so it's visible in the UI rather than silently
+        # leaving a blank DB that will then overwrite the real one on Dropbox.
+        return None, f"⚠️ Dropbox pull failed on cold start: {exc}"
+
+
+@st.cache_resource(show_spinner=False)
 def get_connection() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    # conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    # WAL mode gives better write concurrency and is required for a correct
-    # wal_checkpoint(TRUNCATE) in the Dropbox upload path.
-    # conn.execute()
-    # conn.commit()
-    # return conn
 
 
 @st.cache_resource(show_spinner=False)
@@ -89,6 +114,18 @@ def main() -> None:
     )
 
     st.title("TaskKeeper", anchor=False)
+
+    # Pull from Dropbox BEFORE build_services() opens the SQLite connection.
+    # On a Streamlit Cloud cold start the local file doesn't exist yet —
+    # without this pull, build_services() would create a blank DB which
+    # auto-save would then upload, overwriting the real data on Dropbox.
+    pull_msg, pull_err = pull_from_dropbox_once()
+    if pull_msg:
+        st.toast(pull_msg, icon="📥")
+    if pull_err:
+        # Show a persistent banner so the error is visible even on the
+        # Settings tab — a toast would disappear before the user sees it.
+        st.error(pull_err)
 
     services = build_services()
     conn = get_connection()

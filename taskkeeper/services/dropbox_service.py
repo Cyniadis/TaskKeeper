@@ -25,12 +25,14 @@ from pathlib import Path
 
 import streamlit as st
 
-REDIRECT_URI = st.secrets["DROPBOX_REDIRECT_URI"]     # Dropbox requires one; we read the code from the URL bar
+REDIRECT_URI = st.secrets["DROPBOX_REDIRECT_URI"]
 AUTHORIZE_URL = "https://www.dropbox.com/oauth2/authorize"
 TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 UPLOAD_URL = "https://content.dropboxapi.com/2/files/upload"
 DOWNLOAD_URL = "https://content.dropboxapi.com/2/files/download"
 GET_METADATA_URL = "https://api.dropboxapi.com/2/files/get_metadata"
+LIST_FOLDER_URL = "https://api.dropboxapi.com/2/files/list_folder"
+LIST_FOLDER_CONTINUE_URL = "https://api.dropboxapi.com/2/files/list_folder/continue"
 
 # All files live under this folder in the user's Dropbox.
 FOLDER = "/TaskKeeper"
@@ -61,22 +63,15 @@ class DropboxService:
     # ------------------------------------------------------------------
 
     def authorization_url(self) -> str:
-        """Build the URL the user must visit to authorize the app."""
-        print(REDIRECT_URI)
         params = {
             "client_id": self.app_key,
             "response_type": "code",
-            "token_access_type": "offline",   # gives us a refresh token
+            "token_access_type": "offline",
             "redirect_uri": REDIRECT_URI,
         }
         return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
 
     def exchange_code(self, code: str) -> str:
-        """Exchange an authorization code for a refresh token.
-
-        Returns the refresh_token string and also stores it on self.
-        """
-        print(REDIRECT_URI)
         data = urllib.parse.urlencode({
             "code": code,
             "grant_type": "authorization_code",
@@ -84,7 +79,6 @@ class DropboxService:
         }).encode()
 
         req = urllib.request.Request(TOKEN_URL, data=data, method="POST")
-        # Basic auth: app_key:app_secret
         import base64
         creds = base64.b64encode(f"{self.app_key}:{self.app_secret}".encode()).decode()
         req.add_header("Authorization", f"Basic {creds}")
@@ -98,7 +92,6 @@ class DropboxService:
         return self.refresh_token
 
     def _get_access_token(self) -> str:
-        """Return a valid short-lived access token, refreshing if needed."""
         if self._access_token:
             return self._access_token
 
@@ -127,12 +120,6 @@ class DropboxService:
     # ------------------------------------------------------------------
 
     def _remote_file_exists(self, path: str) -> bool:
-        """Return True when `path` exists in Dropbox.
-
-        Uses get_metadata — returns False on a 409 path_not_found error
-        (the normal Dropbox way of saying "no such file"), re-raises
-        anything else so genuine auth/network failures aren't swallowed.
-        """
         token = self._get_access_token()
         data = json.dumps({"path": path}).encode()
         req = urllib.request.Request(GET_METADATA_URL, data=data, method="POST")
@@ -143,23 +130,20 @@ class DropboxService:
                 return True
         except urllib.error.HTTPError as exc:
             if exc.code == 409:
-                # path_not_found — file simply doesn't exist yet
                 return False
             raise
 
     def _download_remote(self, path: str) -> bytes:
-        """Download the file at `path` from Dropbox and return its bytes."""
         token = self._get_access_token()
         api_args = json.dumps({"path": path})
         req = urllib.request.Request(DOWNLOAD_URL, method="POST")
         req.add_header("Authorization", f"Bearer {token}")
-        req.add_header("Content-Type", "")          # required to be empty for download
+        req.add_header("Content-Type", "")
         req.add_header("Dropbox-API-Arg", api_args)
         with urllib.request.urlopen(req) as resp:
             return resp.read()
 
     def _upload_bytes(self, content: bytes, path: str, *, overwrite: bool = True) -> dict:
-        """Upload raw bytes to `path` in Dropbox. Returns file metadata."""
         token = self._get_access_token()
         api_args = json.dumps({
             "path": path,
@@ -175,24 +159,72 @@ class DropboxService:
             return json.loads(resp.read())
 
     def _ensure_daily_backup(self) -> bool:
-        """Copy the current remote DB to a dated backup path if not done today.
-
-        Returns True when a backup was created, False when it already existed
-        or the remote DB didn't exist yet (first-ever upload).
-
-        Any exception is propagated — the caller (upload_db) decides whether
-        to treat this as fatal or just log it.
-        """
         backup_path = _daily_backup_path()
         if self._remote_file_exists(backup_path):
-            return False   # already backed up today
-
+            return False
         if not self._remote_file_exists(DROPBOX_PATH):
-            return False   # nothing to back up yet
-
+            return False
         content = self._download_remote(DROPBOX_PATH)
         self._upload_bytes(content, backup_path, overwrite=False)
         return True
+
+    # ------------------------------------------------------------------
+    # Folder listing
+    # ------------------------------------------------------------------
+
+    def list_db_files(self) -> list[dict]:
+        """Return metadata dicts for every .db file in the TaskKeeper
+        folder, sorted with taskkeeper.db first, then backups/exports
+        newest-first by server_modified.
+
+        Each dict has keys: path_lower, name, size, server_modified.
+        Returns an empty list when the folder doesn't exist yet.
+        """
+        token = self._get_access_token()
+
+        # list_folder
+        data = json.dumps({"path": FOLDER, "recursive": False}).encode()
+        req = urllib.request.Request(LIST_FOLDER_URL, data=data, method="POST")
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Content-Type", "application/json")
+
+        try:
+            with urllib.request.urlopen(req) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:
+                return []  # folder doesn't exist yet
+            raise
+
+        entries = result.get("entries", [])
+
+        # paginate if needed
+        while result.get("has_more"):
+            cursor = result["cursor"]
+            cont_data = json.dumps({"cursor": cursor}).encode()
+            cont_req = urllib.request.Request(LIST_FOLDER_CONTINUE_URL, data=cont_data, method="POST")
+            cont_req.add_header("Authorization", f"Bearer {token}")
+            cont_req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(cont_req) as resp:
+                result = json.loads(resp.read())
+            entries.extend(result.get("entries", []))
+
+        db_files = [
+            e for e in entries
+            if e.get(".tag") == "file" and e.get("name", "").endswith(".db")
+        ]
+
+        # Sort: main file first, rest newest → oldest
+        def _sort_key(e: dict) -> tuple:
+            is_main = 0 if e["path_lower"] == DROPBOX_PATH.lower() else 1
+            return (is_main, e.get("server_modified", ""))
+
+        db_files.sort(key=_sort_key, reverse=False)
+        # For non-main files we want newest first, so re-sort the tail
+        main = [f for f in db_files if f["path_lower"] == DROPBOX_PATH.lower()]
+        others = [f for f in db_files if f["path_lower"] != DROPBOX_PATH.lower()]
+        others.sort(key=lambda e: e.get("server_modified", ""), reverse=True)
+        return main + others
 
     # ------------------------------------------------------------------
     # Public upload
@@ -200,74 +232,39 @@ class DropboxService:
 
     @staticmethod
     def _flush_to_disk(conn: "sqlite3.Connection") -> None:
-        """Checkpoint as many WAL frames as possible into the main DB file.
-
-        Uses PASSIVE mode — it checkpoints without acquiring an exclusive
-        lock, so it is safe to call while other readers/writers still have
-        the connection open (as is always the case with the cached
-        st.cache_resource connection). Frames that are still in active use
-        by a reader are skipped; they will be included in the next
-        checkpoint. TRUNCATE/FULL would deadlock here because the same
-        connection holds open transactions from the current render pass.
-        """
         conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
         conn.commit()
 
     def upload_db(self, db_path: Path, conn: "sqlite3.Connection | None" = None) -> dict:
-        """Upload `db_path` to Dropbox at DROPBOX_PATH, overwriting.
-
-        Pass the live SQLite `conn` so the WAL is checkpointed before
-        the file is read — without this the on-disk file may be smaller
-        than the live database because unflushed WAL frames are missing.
-
-        Before the first upload of each calendar day the existing remote
-        file is copied to a dated backup path. Subsequent uploads that
-        day skip this step.
-
-        Returns the Dropbox file metadata dict for the main upload.
-        Raises urllib.error.HTTPError on API errors.
-        """
         if conn is not None:
             self._flush_to_disk(conn)
-
-        # Daily backup — best-effort: a failure here should not block saving.
         try:
             self._ensure_daily_backup()
         except Exception:
             pass
-
         db_bytes = db_path.read_bytes()
         return self._upload_bytes(db_bytes, DROPBOX_PATH, overwrite=True)
 
     def export_to_dropbox(self, db_path: Path, conn: "sqlite3.Connection | None" = None) -> dict:
-        """Copy the local DB to TaskKeeper/taskkeeper_export_YYYY-MM-DD.db.
-
-        Pass the live SQLite `conn` to checkpoint the WAL before reading,
-        for the same reason as upload_db.
-
-        Uses autorename so repeated exports on the same day get unique
-        names rather than overwriting each other.
-
-        Returns the Dropbox file metadata dict.
-        """
         if conn is not None:
             self._flush_to_disk(conn)
-
         db_bytes = db_path.read_bytes()
         return self._upload_bytes(db_bytes, _export_path(), overwrite=False)
 
-    def import_from_dropbox(self, local_path: Path) -> int:
-        """Download TaskKeeper/taskkeeper.db from Dropbox and write it to
-        `local_path`, replacing whatever is there.
+    def import_from_dropbox(self, local_path: Path, remote_path: str = DROPBOX_PATH) -> int:
+        """Download `remote_path` from Dropbox and write it to `local_path`.
+
+        `remote_path` defaults to the main taskkeeper.db but can be any
+        path returned by list_db_files() — backups, exports, etc.
 
         Returns the number of bytes written.
-        Raises FileNotFoundError (wrapped) when the remote file is absent.
+        Raises FileNotFoundError when the remote file is absent.
         """
-        if not self._remote_file_exists(DROPBOX_PATH):
+        if not self._remote_file_exists(remote_path):
             raise FileNotFoundError(
-                f"No database found at {DROPBOX_PATH} in your Dropbox."
+                f"No database found at {remote_path} in your Dropbox."
             )
-        content = self._download_remote(DROPBOX_PATH)
+        content = self._download_remote(remote_path)
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(content)
         return len(content)
